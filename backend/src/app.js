@@ -8,6 +8,7 @@ import morgan from 'morgan';
 // Importación de rutas de módulos
 import authRoutes from './modulos/auth/auth.routes.js';
 import usuariosRoutes from './modulos/usuarios/usuarios.routes.js';
+import clientesRoutes from './modulos/clientes/clientes.routes.js';
 
 const app = express();
 
@@ -58,6 +59,7 @@ app.get('/api/health', (req, res) => {
 // Rutas de módulos
 app.use('/api/auth', authRoutes);
 app.use('/api/usuarios', usuariosRoutes);
+app.use('/api/clientes', clientesRoutes);
 
 // Respuesta para rutas inexistentes.
 app.use((req, res) => {
