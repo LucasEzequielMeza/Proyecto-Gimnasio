@@ -5,6 +5,9 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 
+// Importación de rutas de módulos
+import authRoutes from './modulos/auth/auth.routes.js';
+
 const app = express();
 
 if (process.env.NODE_ENV === 'production') {
@@ -51,8 +54,9 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Las rutas de los módulos se registrarán aquí
-// cuando empecemos a implementarlos.
+// Rutas de módulos
+app.use('/api/auth', authRoutes);
+
 
 // Respuesta para rutas inexistentes.
 app.use((req, res) => {

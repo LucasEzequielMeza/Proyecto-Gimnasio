@@ -201,17 +201,3 @@ JOIN permisos p ON p.codigo IN (
 )
 WHERE r.nombre = 'CLIENTE'
 ON CONFLICT DO NOTHING;
-
-CREATE TABLE schema_migrations (
-    version VARCHAR(100) PRIMARY KEY,
-    descripcion VARCHAR(255) NOT NULL,
-    aplicada_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    checksum VARCHAR(64)
-);
-
-INSERT INTO schema_migrations (version, descripcion, checksum)
-VALUES (
-    '000_initial_baseline',
-    'Registro inicial de la estructura existente de ProyectoGym',
-    NULL
-);
