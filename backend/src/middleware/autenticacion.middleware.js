@@ -30,7 +30,6 @@ export const estaAutenticado = async (req, res, next) => {
         payload = verificarTokenDeAcceso(token);
     } catch {
         limpiarCookie(res);
-
         return res.status(401).json({
             success: false,
             message: 'La sesión no es válida o ha expirado'
@@ -39,7 +38,6 @@ export const estaAutenticado = async (req, res, next) => {
 
     if (!payload.sub || !payload.jti) {
         limpiarCookie(res);
-
         return res.status(401).json({
             success: false,
             message: 'La sesión no es válida'
@@ -71,7 +69,6 @@ export const estaAutenticado = async (req, res, next) => {
 
         if (resultado.rowCount === 0) {
             limpiarCookie(res);
-
             return res.status(401).json({
                 success: false,
                 message: 'La sesión ya no está disponible'
@@ -82,7 +79,6 @@ export const estaAutenticado = async (req, res, next) => {
 
         if (fila.estado !== 'activo') {
             limpiarCookie(res);
-
             return res.status(403).json({
                 success: false,
                 message: 'La cuenta no está habilitada'
@@ -129,14 +125,61 @@ export const estaAutenticado = async (req, res, next) => {
 
         return next();
     } catch (error) {
-        console.error(
-            'Error al autenticar la solicitud:',
-            error.message
-        );
+        console.error('Error al autenticar la solicitud:', error.message);
 
         return res.status(500).json({
             success: false,
             message: 'Error interno del servidor'
         });
     }
+};
+
+export const requiereRol = (...rolesPermitidos) => {
+    return (req, res, next) => {
+        if (!req.usuario) {
+            return res.status(401).json({
+                success: false,
+                message: 'Se requiere iniciar sesión'
+            });
+        }
+
+        const tieneRol = rolesPermitidos.some(
+            (rol) => req.usuario.roles.includes(rol)
+        );
+
+        if (!tieneRol) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tenés permisos para realizar esta operación'
+            });
+        }
+
+        return next();
+    };
+};
+
+export const requierePermiso = (...permisosRequeridos) => {
+    return (req, res, next) => {
+        if (!req.usuario) {
+            return res.status(401).json({
+                success: false,
+                message: 'Se requiere iniciar sesión'
+            });
+        }
+
+        const permisosUsuario = req.usuario.permisos ?? [];
+
+        const tienePermiso = permisosRequeridos.some(
+            (permiso) => permisosUsuario.includes(permiso)
+        );
+
+        if (!tienePermiso) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tenés permisos para realizar esta operación'
+            });
+        }
+
+        return next();
+    };
 };
