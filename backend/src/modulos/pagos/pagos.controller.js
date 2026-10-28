@@ -4,6 +4,7 @@ import {
     obtenerPagoSchema,
     crearPagoSchema
 } from './pagos.schemas.js';
+import { crearNotificacion } from '../notificaciones/notificaciones.service.js';
 
 export const listarPagos = async (req, res, next) => {
     try {
@@ -127,7 +128,7 @@ export const obtenerPago = async (req, res, next) => {
 };
 
 export const crearPago = async (req, res, next) => {
-    const cliente = await pool.connect();
+    let cliente;
 
     try {
         const validacion = crearPagoSchema.safeParse(req.body);
@@ -141,21 +142,24 @@ export const crearPago = async (req, res, next) => {
 
         const { membresia_id, medio_pago } = validacion.data;
 
+        cliente = await pool.connect();
+
         await cliente.query('BEGIN');
 
         const resultadoMembresia = await cliente.query(
             `SELECT
-                id,
-                precio,
-                moneda,
-                estado,
-                fecha_fin,
-                (
-                    CURRENT_DATE AT TIME ZONE 'America/Argentina/Buenos_Aires'
-                ) AS fecha_actual
-             FROM membresias
-             WHERE id = $1
-             FOR UPDATE`,
+                m.id,
+                m.precio,
+                m.moneda,
+                m.estado,
+                m.fecha_fin,
+                c.usuario_id,
+                c.nombre,
+                c.apellido
+             FROM membresias m
+             INNER JOIN clientes c ON c.id = m.cliente_id
+             WHERE m.id = $1
+             FOR UPDATE OF m`,
             [membresia_id]
         );
 
@@ -241,17 +245,34 @@ export const crearPago = async (req, res, next) => {
             ]
         );
 
+        const pago = resultadoPago.rows[0];
+
+        if (membresia.usuario_id) {
+            await crearNotificacion({
+                usuarioId: membresia.usuario_id,
+                tipo: 'PAGO',
+                titulo: 'Pago registrado correctamente',
+                mensaje: `Se registró tu pago de ${pago.moneda} ${pago.monto}.`,
+                entidadTipo: 'pago',
+                entidadId: pago.id,
+                claveUnica: `pago:${pago.id}:aprobado`,
+                conexion: cliente
+            });
+        }
+
         await cliente.query('COMMIT');
 
         return res.status(201).json({
             mensaje: 'Pago registrado correctamente',
-            pago: resultadoPago.rows[0]
+            pago
         });
     } catch (error) {
-        await cliente.query('ROLLBACK').catch(() => {});
+        if (cliente) {
+            await cliente.query('ROLLBACK').catch(() => {});
+        }
 
         return next(error);
     } finally {
-        cliente.release();
+        cliente?.release();
     }
 };

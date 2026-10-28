@@ -3,14 +3,16 @@ import app from './app.js';
 import { pool } from './db.js';
 import { ejecutarMigraciones } from './utils/migraciones.js';
 import { iniciarProcesoVencimientos } from './modulos/membresias/membresias.vencimientos.js';
+import { iniciarJobNotificaciones } from './modulos/notificaciones/notificaciones.job.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 
 let server;
 let detenerProcesoVencimientos;
+let detenerJobNotificaciones;
 let cerrando = false;
 
-async function cerrarServidor(codigoSalida = 0) {
+const cerrarServidor = async (codigoSalida = 0) => {
     if (cerrando) return;
 
     cerrando = true;
@@ -19,6 +21,7 @@ async function cerrarServidor(codigoSalida = 0) {
     console.log('Cerrando servidor...');
 
     detenerProcesoVencimientos?.();
+    detenerJobNotificaciones?.();
 
     if (server) {
         await new Promise((resolve) => {
@@ -37,9 +40,9 @@ async function cerrarServidor(codigoSalida = 0) {
 
         process.exitCode = 1;
     }
-}
+};
 
-async function iniciarServidor() {
+const iniciarServidor = async () => {
     try {
         await pool.query('SELECT 1');
 
@@ -54,6 +57,9 @@ async function iniciarServidor() {
 
             detenerProcesoVencimientos =
                 iniciarProcesoVencimientos();
+
+            detenerJobNotificaciones =
+                iniciarJobNotificaciones();
         });
 
         server.on('error', (error) => {
@@ -72,7 +78,7 @@ async function iniciarServidor() {
 
         await cerrarServidor(1);
     }
-}
+};
 
 process.once('SIGINT', () => {
     void cerrarServidor(0);

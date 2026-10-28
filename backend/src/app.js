@@ -14,6 +14,7 @@ import membresiasRoutes from './modulos/membresias/membresias.routes.js';
 import pagosRoutes from './modulos/pagos/pagos.routes.js';
 import asistenciasRoutes from './modulos/asistencias/asistencias.routes.js';
 import rutinasRoutes from './modulos/rutinas/rutinas.routes.js';
+import notificacionesRoutes from './modulos/notificaciones/notificaciones.routes.js';
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use('/api/membresias', membresiasRoutes)
 app.use('/api/pagos', pagosRoutes);
 app.use('/api/asistencias', asistenciasRoutes);
 app.use('/api/rutinas', rutinasRoutes);
+app.use('/api/notificaciones', notificacionesRoutes);
 
 // Respuesta para rutas inexistentes.
 app.use((req, res) => {
