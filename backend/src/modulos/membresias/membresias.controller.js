@@ -1,5 +1,4 @@
 import { pool } from '../../db.js';
-
 import {
     listarMembresiasSchema,
     idMembresiaSchema,
@@ -7,19 +6,13 @@ import {
     editarMembresiaSchema,
     cambiarEstadoMembresiaSchema,
 } from './membresias.schemas.js';
-
-import {
-    actualizarMembresiasVencidas,
-} from './membresias.vencimientos.js';
+import { actualizarMembresiasVencidas } from './membresias.vencimientos.js';
 
 const responderErrorValidacion = (res, error) => {
     return res.status(400).json({
         success: false,
         message: 'Los datos enviados no son válidos',
-        errores: error.issues.map((issue) => ({
-            campo: issue.path.join('.'),
-            mensaje: issue.message,
-        })),
+        errores: error.issues,
     });
 };
 
@@ -30,14 +23,20 @@ const responderError = (res, status, message) => {
     });
 };
 
-const obtenerFechaActual = async (cliente = pool) => {
-    const resultado = await cliente.query(`
-        SELECT (
-            NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires'
-        )::date::text AS hoy
-    `);
+const tienePermiso = (req, permiso) => {
+    return req.usuario?.permisos?.includes(permiso) ?? false;
+};
 
-    return resultado.rows[0].hoy;
+const esCliente = (req) => {
+    return req.usuario?.roles?.includes('CLIENTE') ?? false;
+};
+
+const obtenerFechaActual = async (cliente = pool) => {
+    const resultado = await cliente.query(
+        "SELECT TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD') AS fecha"
+    );
+
+    return resultado.rows[0].fecha;
 };
 
 const fechaUTC = (fecha) => {
@@ -47,7 +46,11 @@ const fechaUTC = (fecha) => {
 };
 
 const formatoFechaUTC = (fecha) => {
-    return fecha.toISOString().slice(0, 10);
+    const anio = fecha.getUTCFullYear();
+    const mes = String(fecha.getUTCMonth() + 1).padStart(2, '0');
+    const dia = String(fecha.getUTCDate()).padStart(2, '0');
+
+    return `${anio}-${mes}-${dia}`;
 };
 
 const sumarDias = (fecha, dias) => {
@@ -58,27 +61,29 @@ const sumarDias = (fecha, dias) => {
     return formatoFechaUTC(resultado);
 };
 
-const sumarMesesCalendario = (fecha, cantidad) => {
+const sumarMesesCalendario = (fecha, meses) => {
     const original = fechaUTC(fecha);
     const diaOriginal = original.getUTCDate();
 
-    const primerDiaDestino = new Date(Date.UTC(
-        original.getUTCFullYear(),
-        original.getUTCMonth() + cantidad,
-        1
-    ));
-
-    const ultimoDiaDestino = new Date(Date.UTC(
-        primerDiaDestino.getUTCFullYear(),
-        primerDiaDestino.getUTCMonth() + 1,
-        0
-    )).getUTCDate();
-
-    primerDiaDestino.setUTCDate(
-        Math.min(diaOriginal, ultimoDiaDestino)
+    const destino = new Date(
+        Date.UTC(
+            original.getUTCFullYear(),
+            original.getUTCMonth() + meses,
+            1
+        )
     );
 
-    return formatoFechaUTC(primerDiaDestino);
+    const ultimoDiaDestino = new Date(
+        Date.UTC(
+            destino.getUTCFullYear(),
+            destino.getUTCMonth() + 1,
+            0
+        )
+    ).getUTCDate();
+
+    destino.setUTCDate(Math.min(diaOriginal, ultimoDiaDestino));
+
+    return formatoFechaUTC(destino);
 };
 
 const calcularFechaFin = (fechaInicio, tipoPlan, duracionDias) => {
@@ -86,38 +91,34 @@ const calcularFechaFin = (fechaInicio, tipoPlan, duracionDias) => {
         return sumarDias(fechaInicio, duracionDias - 1);
     }
 
-    const siguientePeriodo = sumarMesesCalendario(fechaInicio, 1);
+    const fechaMesSiguiente = sumarMesesCalendario(fechaInicio, 1);
 
-    return sumarDias(siguientePeriodo, -1);
+    return sumarDias(fechaMesSiguiente, -1);
 };
 
 const validarId = (req, res) => {
-    const resultado = idMembresiaSchema.safeParse(req.params);
+    const validacion = idMembresiaSchema.safeParse(req.params);
 
-    if (!resultado.success) {
-        responderErrorValidacion(res, resultado.error);
+    if (!validacion.success) {
+        responderErrorValidacion(res, validacion.error);
         return null;
     }
 
-    return resultado.data.id;
+    return validacion.data.id;
 };
 
 const revertirTransaccion = async (cliente, transaccionIniciada) => {
-    if (!cliente || !transaccionIniciada) {
+    if (!transaccionIniciada) {
         return;
     }
 
     try {
         await cliente.query('ROLLBACK');
     } catch (error) {
-        console.error(
-            'Error al revertir la transacción:',
-            error.message
-        );
+        console.error('Error al revertir la transacción:', error);
     }
 };
 
-// GET /api/membresias
 export const listarMembresias = async (req, res) => {
     const validacion = listarMembresiasSchema.safeParse(req.query);
 
@@ -134,15 +135,21 @@ export const listarMembresias = async (req, res) => {
         busqueda,
     } = validacion.data;
 
+    const usuarioEsCliente = esCliente(req);
+
     const condiciones = [];
     const valores = [];
 
-    const agregarCondicion = (sql, valor) => {
+    const agregarCondicion = (condicion, valor) => {
         valores.push(valor);
-        condiciones.push(sql.replace('?', `$${valores.length}`));
+        condiciones.push(
+            condicion.replace('?', `$${valores.length}`)
+        );
     };
 
-    if (cliente_id) {
+    if (usuarioEsCliente) {
+        agregarCondicion('c.usuario_id = ?', req.usuario.id);
+    } else if (cliente_id) {
         agregarCondicion('m.cliente_id = ?', cliente_id);
     }
 
@@ -166,14 +173,13 @@ export const listarMembresias = async (req, res) => {
         )`);
     }
 
-    const where = condiciones.length
+    const where = condiciones.length > 0
         ? `WHERE ${condiciones.join(' AND ')}`
         : '';
 
     const offset = (pagina - 1) * limite;
 
     try {
-        // Persiste los vencimientos antes de filtrar por estado.
         await actualizarMembresiasVencidas();
 
         const consulta = `
@@ -239,45 +245,54 @@ export const listarMembresias = async (req, res) => {
     }
 };
 
-// GET /api/membresias/:id
 export const obtenerMembresia = async (req, res) => {
     const id = validarId(req, res);
 
-    if (!id) return;
+    if (!id) {
+        return;
+    }
+
+    const valores = [id];
+    let condicionPropietario = '';
+
+    if (esCliente(req)) {
+        valores.push(req.usuario.id);
+        condicionPropietario = `AND c.usuario_id = $${valores.length}`;
+    }
 
     try {
         await actualizarMembresiasVencidas();
 
         const resultado = await pool.query(
-            `SELECT
-                m.id,
-                m.cliente_id,
-                m.plan_id,
-                m.fecha_inicio,
-                m.fecha_fin,
-                m.precio,
-                m.moneda,
-                m.tipo_plan,
-                m.duracion_dias,
-                m.estado,
-                m.created_at,
-                m.updated_at,
-                c.nombre AS cliente_nombre,
-                c.apellido AS cliente_apellido,
-                p.nombre AS plan_nombre
-             FROM membresias m
-             INNER JOIN clientes c ON c.id = m.cliente_id
-             INNER JOIN planes p ON p.id = m.plan_id
-             WHERE m.id = $1`,
-            [id]
+            `
+                SELECT
+                    m.id,
+                    m.cliente_id,
+                    m.plan_id,
+                    m.fecha_inicio,
+                    m.fecha_fin,
+                    m.precio,
+                    m.moneda,
+                    m.tipo_plan,
+                    m.duracion_dias,
+                    m.estado,
+                    m.created_at,
+                    m.updated_at,
+                    c.nombre AS cliente_nombre,
+                    c.apellido AS cliente_apellido,
+                    p.nombre AS plan_nombre
+                FROM membresias m
+                INNER JOIN clientes c ON c.id = m.cliente_id
+                INNER JOIN planes p ON p.id = m.plan_id
+                WHERE m.id = $1
+                ${condicionPropietario}
+                LIMIT 1
+            `,
+            valores
         );
 
-        if (resultado.rowCount === 0) {
-            return responderError(
-                res,
-                404,
-                'La membresía solicitada no existe'
-            );
+        if (resultado.rows.length === 0) {
+            return responderError(res, 404, 'Membresía no encontrada');
         }
 
         return res.status(200).json({
@@ -296,8 +311,15 @@ export const obtenerMembresia = async (req, res) => {
     }
 };
 
-// POST /api/membresias
 export const crearMembresia = async (req, res) => {
+    if (!tienePermiso(req, 'membresias.crear')) {
+        return responderError(
+            res,
+            403,
+            'No tenés permiso para crear membresías'
+        );
+    }
+
     const validacion = crearMembresiaSchema.safeParse(req.body);
 
     if (!validacion.success) {
@@ -310,20 +332,18 @@ export const crearMembresia = async (req, res) => {
         fecha_inicio,
     } = validacion.data;
 
-    let client;
+    const cliente = await pool.connect();
     let transaccionIniciada = false;
 
     try {
-        client = await pool.connect();
-
-        await client.query('BEGIN');
+        await cliente.query('BEGIN');
         transaccionIniciada = true;
 
-        const hoy = await obtenerFechaActual(client);
-        const inicio = fecha_inicio ?? hoy;
+        const hoy = await obtenerFechaActual(cliente);
+        const fechaInicio = fecha_inicio ?? hoy;
 
-        if (inicio > hoy) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (fechaInicio > hoy) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
@@ -333,24 +353,25 @@ export const crearMembresia = async (req, res) => {
             );
         }
 
-        // Serializa las contrataciones del mismo cliente.
-        const cliente = await client.query(
-            `SELECT id, estado
-             FROM clientes
-             WHERE id = $1
-             FOR UPDATE`,
+        const resultadoCliente = await cliente.query(
+            `
+                SELECT id, estado
+                FROM clientes
+                WHERE id = $1
+                FOR UPDATE
+            `,
             [cliente_id]
         );
 
-        if (cliente.rowCount === 0) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (resultadoCliente.rows.length === 0) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
-            return responderError(res, 404, 'El cliente no existe');
+            return responderError(res, 404, 'Cliente no encontrado');
         }
 
-        if (cliente.rows[0].estado !== 'activo') {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (resultadoCliente.rows[0].estado !== 'activo') {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
@@ -360,73 +381,51 @@ export const crearMembresia = async (req, res) => {
             );
         }
 
-        const plan = await client.query(
-            `SELECT id, nombre, precio, moneda, tipo, duracion_dias, estado
-             FROM planes
-             WHERE id = $1
-             FOR SHARE`,
+        const resultadoPlan = await cliente.query(
+            `
+                SELECT id, nombre, precio, moneda, tipo_plan, duracion_dias
+                FROM planes
+                WHERE id = $1
+                FOR SHARE
+            `,
             [plan_id]
         );
 
-        if (plan.rowCount === 0) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (resultadoPlan.rows.length === 0) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
-            return responderError(res, 404, 'El plan no existe');
+            return responderError(res, 404, 'Plan no encontrado');
         }
 
-        const datosPlan = plan.rows[0];
+        const plan = resultadoPlan.rows[0];
 
-        if (datosPlan.estado !== 'activo') {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (plan.estado !== undefined && plan.estado !== 'activo') {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
                 res,
                 409,
-                'No se puede contratar un plan inactivo'
+                'No se puede crear una membresía con un plan inactivo'
             );
         }
 
-        const fecha_fin = calcularFechaFin(
-            inicio,
-            datosPlan.tipo,
-            datosPlan.duracion_dias
-        );
+        await actualizarMembresiasVencidas();
 
-        if (fecha_fin < hoy) {
-            await revertirTransaccion(client, transaccionIniciada);
-            transaccionIniciada = false;
-
-            return responderError(
-                res,
-                400,
-                'La fecha de fin de la membresía ya pasó'
-            );
-        }
-
-        // Las membresías vencidas dejan de bloquear nuevas contrataciones.
-        await client.query(
-            `UPDATE membresias
-             SET estado = 'VENCIDA',
-                 updated_at = NOW()
-             WHERE cliente_id = $1
-               AND estado = 'ACTIVA'
-               AND fecha_fin < $2::date`,
-            [cliente_id, hoy]
-        );
-
-        const membresiaActiva = await client.query(
-            `SELECT id
-             FROM membresias
-             WHERE cliente_id = $1
-               AND estado = 'ACTIVA'
-             LIMIT 1`,
+        const membresiaActiva = await cliente.query(
+            `
+                SELECT id
+                FROM membresias
+                WHERE cliente_id = $1
+                  AND estado = 'ACTIVA'
+                LIMIT 1
+            `,
             [cliente_id]
         );
 
-        if (membresiaActiva.rowCount > 0) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (membresiaActiva.rows.length > 0) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
@@ -436,42 +435,50 @@ export const crearMembresia = async (req, res) => {
             );
         }
 
-        const nueva = await client.query(
-            `INSERT INTO membresias (
-                cliente_id,
-                plan_id,
-                fecha_inicio,
-                fecha_fin,
-                precio,
-                moneda,
-                tipo_plan,
-                duracion_dias,
-                estado
-             )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVA')
-             RETURNING *`,
+        const fechaFin = calcularFechaFin(
+            fechaInicio,
+            plan.tipo_plan,
+            plan.duracion_dias
+        );
+
+        const resultado = await cliente.query(
+            `
+                INSERT INTO membresias (
+                    cliente_id,
+                    plan_id,
+                    fecha_inicio,
+                    fecha_fin,
+                    precio,
+                    moneda,
+                    estado,
+                    tipo_plan,
+                    duracion_dias
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVA', $7, $8)
+                RETURNING *
+            `,
             [
                 cliente_id,
                 plan_id,
-                inicio,
-                fecha_fin,
-                datosPlan.precio,
-                datosPlan.moneda,
-                datosPlan.tipo,
-                datosPlan.duracion_dias,
+                fechaInicio,
+                fechaFin,
+                plan.precio,
+                plan.moneda,
+                plan.tipo_plan,
+                plan.duracion_dias,
             ]
         );
 
-        await client.query('COMMIT');
+        await cliente.query('COMMIT');
         transaccionIniciada = false;
 
         return res.status(201).json({
             success: true,
             message: 'Membresía creada correctamente',
-            data: nueva.rows[0],
+            data: resultado.rows[0],
         });
     } catch (error) {
-        await revertirTransaccion(client, transaccionIniciada);
+        await revertirTransaccion(cliente, transaccionIniciada);
 
         if (error.code === '23505') {
             return responderError(
@@ -489,16 +496,24 @@ export const crearMembresia = async (req, res) => {
             'Ocurrió un error al crear la membresía'
         );
     } finally {
-        client?.release();
+        cliente.release();
     }
 };
 
-// PATCH /api/membresias/:id
-// Recalcula la fecha de fin con las condiciones históricas del plan.
 export const editarMembresia = async (req, res) => {
+    if (!tienePermiso(req, 'membresias.editar')) {
+        return responderError(
+            res,
+            403,
+            'No tenés permiso para editar membresías'
+        );
+    }
+
     const id = validarId(req, res);
 
-    if (!id) return;
+    if (!id) {
+        return;
+    }
 
     const validacion = editarMembresiaSchema.safeParse(req.body);
 
@@ -506,72 +521,70 @@ export const editarMembresia = async (req, res) => {
         return responderErrorValidacion(res, validacion.error);
     }
 
-    let client;
+    const { fecha_inicio } = validacion.data;
+
+    const cliente = await pool.connect();
     let transaccionIniciada = false;
 
     try {
-        client = await pool.connect();
-
-        await client.query('BEGIN');
+        await cliente.query('BEGIN');
         transaccionIniciada = true;
 
-        const hoy = await obtenerFechaActual(client);
-
-        const actual = await client.query(
-            `SELECT *
-             FROM membresias
-             WHERE id = $1
-             FOR UPDATE`,
+        const resultado = await cliente.query(
+            `
+                SELECT *
+                FROM membresias
+                WHERE id = $1
+                FOR UPDATE
+            `,
             [id]
         );
 
-        if (actual.rowCount === 0) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (resultado.rows.length === 0) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
-            return responderError(
-                res,
-                404,
-                'La membresía solicitada no existe'
-            );
+            return responderError(res, 404, 'Membresía no encontrada');
         }
 
-        const membresia = actual.rows[0];
+        const membresia = resultado.rows[0];
 
         if (membresia.estado !== 'ACTIVA') {
-            await revertirTransaccion(client, transaccionIniciada);
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
                 res,
                 409,
-                'Solo se pueden editar membresías activas y vigentes'
+                'Solo se pueden editar membresías activas'
             );
         }
 
+        const hoy = await obtenerFechaActual(cliente);
+
         if (membresia.fecha_fin < hoy) {
-            await client.query(
-                `UPDATE membresias
-                 SET estado = 'VENCIDA',
-                     updated_at = NOW()
-                 WHERE id = $1`,
+            await cliente.query(
+                `
+                    UPDATE membresias
+                    SET estado = 'VENCIDA',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $1
+                `,
                 [id]
             );
 
-            await client.query('COMMIT');
+            await cliente.query('COMMIT');
             transaccionIniciada = false;
 
             return responderError(
                 res,
                 409,
-                'La membresía venció y su estado se actualizó a VENCIDA'
+                'La membresía ya venció y no puede editarse'
             );
         }
 
-        const inicio = validacion.data.fecha_inicio;
-
-        if (inicio > hoy) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (fecha_inicio > hoy) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
@@ -581,61 +594,72 @@ export const editarMembresia = async (req, res) => {
             );
         }
 
-        const fecha_fin = calcularFechaFin(
-            inicio,
+        const fechaFin = calcularFechaFin(
+            fecha_inicio,
             membresia.tipo_plan,
             membresia.duracion_dias
         );
 
-        if (fecha_fin < hoy) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (fechaFin < hoy) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
                 res,
                 400,
-                'La fecha de fin resultante ya pasó'
+                'La fecha de fin calculada no puede estar en el pasado'
             );
         }
 
-        const actualizada = await client.query(
-            `UPDATE membresias
-             SET fecha_inicio = $1,
-                 fecha_fin = $2,
-                 updated_at = NOW()
-             WHERE id = $3
-             RETURNING *`,
-            [inicio, fecha_fin, id]
+        const actualizacion = await cliente.query(
+            `
+                UPDATE membresias
+                SET fecha_inicio = $1,
+                    fecha_fin = $2,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = $3
+                RETURNING *
+            `,
+            [fecha_inicio, fechaFin, id]
         );
 
-        await client.query('COMMIT');
+        await cliente.query('COMMIT');
         transaccionIniciada = false;
 
         return res.status(200).json({
             success: true,
             message: 'Membresía actualizada correctamente',
-            data: actualizada.rows[0],
+            data: actualizacion.rows[0],
         });
     } catch (error) {
-        await revertirTransaccion(client, transaccionIniciada);
+        await revertirTransaccion(cliente, transaccionIniciada);
 
         console.error('Error al editar membresía:', error);
 
         return responderError(
             res,
             500,
-            'Ocurrió un error al actualizar la membresía'
+            'Ocurrió un error al editar la membresía'
         );
     } finally {
-        client?.release();
+        cliente.release();
     }
 };
 
-// PATCH /api/membresias/:id/estado
 export const cambiarEstadoMembresia = async (req, res) => {
+    if (!tienePermiso(req, 'membresias.cancelar')) {
+        return responderError(
+            res,
+            403,
+            'No tenés permiso para cancelar membresías'
+        );
+    }
+
     const id = validarId(req, res);
 
-    if (!id) return;
+    if (!id) {
+        return;
+    }
 
     const validacion = cambiarEstadoMembresiaSchema.safeParse(req.body);
 
@@ -643,40 +667,34 @@ export const cambiarEstadoMembresia = async (req, res) => {
         return responderErrorValidacion(res, validacion.error);
     }
 
-    let client;
+    const cliente = await pool.connect();
     let transaccionIniciada = false;
 
     try {
-        client = await pool.connect();
-
-        await client.query('BEGIN');
+        await cliente.query('BEGIN');
         transaccionIniciada = true;
 
-        const hoy = await obtenerFechaActual(client);
-
-        const actual = await client.query(
-            `SELECT id, estado, fecha_fin
-             FROM membresias
-             WHERE id = $1
-             FOR UPDATE`,
+        const resultado = await cliente.query(
+            `
+                SELECT *
+                FROM membresias
+                WHERE id = $1
+                FOR UPDATE
+            `,
             [id]
         );
 
-        if (actual.rowCount === 0) {
-            await revertirTransaccion(client, transaccionIniciada);
+        if (resultado.rows.length === 0) {
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
-            return responderError(
-                res,
-                404,
-                'La membresía solicitada no existe'
-            );
+            return responderError(res, 404, 'Membresía no encontrada');
         }
 
-        const membresia = actual.rows[0];
+        const membresia = resultado.rows[0];
 
         if (membresia.estado !== 'ACTIVA') {
-            await revertirTransaccion(client, transaccionIniciada);
+            await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
             return responderError(
@@ -686,16 +704,20 @@ export const cambiarEstadoMembresia = async (req, res) => {
             );
         }
 
+        const hoy = await obtenerFechaActual(cliente);
+
         if (membresia.fecha_fin < hoy) {
-            await client.query(
-                `UPDATE membresias
-                 SET estado = 'VENCIDA',
-                     updated_at = NOW()
-                 WHERE id = $1`,
+            await cliente.query(
+                `
+                    UPDATE membresias
+                    SET estado = 'VENCIDA',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $1
+                `,
                 [id]
             );
 
-            await client.query('COMMIT');
+            await cliente.query('COMMIT');
             transaccionIniciada = false;
 
             return responderError(
@@ -705,34 +727,36 @@ export const cambiarEstadoMembresia = async (req, res) => {
             );
         }
 
-        const actualizada = await client.query(
-            `UPDATE membresias
-             SET estado = 'CANCELADA',
-                 updated_at = NOW()
-             WHERE id = $1
-             RETURNING *`,
+        const actualizacion = await cliente.query(
+            `
+                UPDATE membresias
+                SET estado = 'CANCELADA',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = $1
+                RETURNING *
+            `,
             [id]
         );
 
-        await client.query('COMMIT');
+        await cliente.query('COMMIT');
         transaccionIniciada = false;
 
         return res.status(200).json({
             success: true,
             message: 'Membresía cancelada correctamente',
-            data: actualizada.rows[0],
+            data: actualizacion.rows[0],
         });
     } catch (error) {
-        await revertirTransaccion(client, transaccionIniciada);
+        await revertirTransaccion(cliente, transaccionIniciada);
 
-        console.error('Error al cambiar estado de membresía:', error);
+        console.error('Error al cancelar membresía:', error);
 
         return responderError(
             res,
             500,
-            'Ocurrió un error al cambiar el estado de la membresía'
+            'Ocurrió un error al cancelar la membresía'
         );
     } finally {
-        client?.release();
+        cliente.release();
     }
 };

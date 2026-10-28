@@ -15,6 +15,8 @@ import pagosRoutes from './modulos/pagos/pagos.routes.js';
 import asistenciasRoutes from './modulos/asistencias/asistencias.routes.js';
 import rutinasRoutes from './modulos/rutinas/rutinas.routes.js';
 import notificacionesRoutes from './modulos/notificaciones/notificaciones.routes.js';
+import clasesRoutes from './modulos/clases/clases.routes.js';
+import reservasRoutes from './modulos/clases/reservas.routes.js';
 
 const app = express();
 
@@ -67,11 +69,13 @@ app.use('/api/auth', authRoutes);
 app.use('/api/usuarios', usuariosRoutes);
 app.use('/api/clientes', clientesRoutes);
 app.use('/api/planes', planesRoutes);
-app.use('/api/membresias', membresiasRoutes)
+app.use('/api/membresias', membresiasRoutes);
 app.use('/api/pagos', pagosRoutes);
 app.use('/api/asistencias', asistenciasRoutes);
 app.use('/api/rutinas', rutinasRoutes);
 app.use('/api/notificaciones', notificacionesRoutes);
+app.use('/api/clases', clasesRoutes);
+app.use('/api/reservas', reservasRoutes);
 
 // Respuesta para rutas inexistentes.
 app.use((req, res) => {

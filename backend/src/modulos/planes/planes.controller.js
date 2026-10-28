@@ -87,9 +87,17 @@ export const listarPlanes = async (req, res) => {
 
     const { pagina, limite, busqueda, estado, tipo } = validacion.data;
     const offset = (pagina - 1) * limite;
+    const esAdministrador = req.usuario.roles.includes('ADMIN');
 
     const condiciones = [];
     const valores = [];
+
+    if (!esAdministrador) {
+        condiciones.push("estado = 'activo'");
+    } else if (estado) {
+        valores.push(estado);
+        condiciones.push(`estado = $${valores.length}`);
+    }
 
     if (busqueda) {
         valores.push(`%${busqueda}%`);
@@ -98,20 +106,14 @@ export const listarPlanes = async (req, res) => {
         );
     }
 
-    if (estado) {
-        valores.push(estado);
-        condiciones.push(`estado = $${valores.length}`);
-    }
-
     if (tipo) {
         valores.push(tipo);
         condiciones.push(`tipo = $${valores.length}`);
     }
 
-    const where =
-        condiciones.length > 0
-            ? `WHERE ${condiciones.join(' AND ')}`
-            : '';
+    const where = condiciones.length
+        ? `WHERE ${condiciones.join(' AND ')}`
+        : '';
 
     try {
         const consultaTotal = await pool.query(
@@ -175,6 +177,8 @@ export const obtenerPlan = async (req, res) => {
         );
     }
 
+    const esAdministrador = req.usuario.roles.includes('ADMIN');
+
     try {
         const resultado = await pool.query(
             `SELECT
@@ -189,7 +193,8 @@ export const obtenerPlan = async (req, res) => {
                 created_at,
                 updated_at
              FROM planes
-             WHERE id = $1`,
+             WHERE id = $1
+             ${esAdministrador ? '' : "AND estado = 'activo'"}`,
             [validacion.data]
         );
 
