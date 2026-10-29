@@ -1,5 +1,6 @@
 import { pool } from '../db.js';
 import { verificarTokenDeAcceso } from '../modulos/auth/jwt.js';
+import { requierePermiso } from './permisos.middleware.js';
 
 export const NOMBRE_COOKIE = 'proyectogym_session';
 
@@ -30,6 +31,7 @@ export const estaAutenticado = async (req, res, next) => {
         payload = verificarTokenDeAcceso(token);
     } catch {
         limpiarCookie(res);
+
         return res.status(401).json({
             success: false,
             message: 'La sesión no es válida o ha expirado'
@@ -38,6 +40,7 @@ export const estaAutenticado = async (req, res, next) => {
 
     if (!payload.sub || !payload.jti) {
         limpiarCookie(res);
+
         return res.status(401).json({
             success: false,
             message: 'La sesión no es válida'
@@ -69,6 +72,7 @@ export const estaAutenticado = async (req, res, next) => {
 
         if (resultado.rowCount === 0) {
             limpiarCookie(res);
+
             return res.status(401).json({
                 success: false,
                 message: 'La sesión ya no está disponible'
@@ -79,6 +83,7 @@ export const estaAutenticado = async (req, res, next) => {
 
         if (fila.estado !== 'activo') {
             limpiarCookie(res);
+
             return res.status(403).json({
                 success: false,
                 message: 'La cuenta no está habilitada'
@@ -87,7 +92,7 @@ export const estaAutenticado = async (req, res, next) => {
 
         const [resultadoRoles, resultadoPermisos] = await Promise.all([
             pool.query(
-                `SELECT r.id, r.nombre
+                `SELECT r.nombre
                  FROM usuario_roles ur
                  INNER JOIN roles r ON r.id = ur.rol_id
                  WHERE ur.usuario_id = $1
@@ -143,8 +148,10 @@ export const requiereRol = (...rolesPermitidos) => {
             });
         }
 
+        const rolesUsuario = req.usuario.roles ?? [];
+
         const tieneRol = rolesPermitidos.some(
-            (rol) => req.usuario.roles.includes(rol)
+            (rol) => rolesUsuario.includes(rol)
         );
 
         if (!tieneRol) {
@@ -158,28 +165,4 @@ export const requiereRol = (...rolesPermitidos) => {
     };
 };
 
-export const requierePermiso = (...permisosRequeridos) => {
-    return (req, res, next) => {
-        if (!req.usuario) {
-            return res.status(401).json({
-                success: false,
-                message: 'Se requiere iniciar sesión'
-            });
-        }
-
-        const permisosUsuario = req.usuario.permisos ?? [];
-
-        const tienePermiso = permisosRequeridos.some(
-            (permiso) => permisosUsuario.includes(permiso)
-        );
-
-        if (!tienePermiso) {
-            return res.status(403).json({
-                success: false,
-                message: 'No tenés permisos para realizar esta operación'
-            });
-        }
-
-        return next();
-    };
-};
+export { requierePermiso };

@@ -6,6 +6,7 @@ import {
 } from './auth.controller.js';
 import { validateSchema } from '../../middleware/validacion.middleware.js';
 import { loginSchema } from './auth.schemas.js';
+
 import {
     limiteLogin
 } from '../../middleware/limiteAutorizacion.middleware.js';

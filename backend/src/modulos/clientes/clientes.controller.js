@@ -278,6 +278,13 @@ export const editarCliente = async (req, res) => {
             }
         }
 
+        if (asignaciones.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Tenés que enviar al menos un campo para actualizar'
+            });
+        }
+
         valores.push(id);
 
         const resultado = await pool.query(

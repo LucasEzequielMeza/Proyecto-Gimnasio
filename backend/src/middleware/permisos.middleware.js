@@ -7,13 +7,20 @@ export const requierePermiso = (...permisosRequeridos) => {
             });
         }
 
+        if (permisosRequeridos.length === 0) {
+            return res.status(500).json({
+                success: false,
+                message: 'La ruta no tiene permisos configurados'
+            });
+        }
+
         const permisosUsuario = req.usuario.permisos ?? [];
 
-        const tienePermiso = permisosRequeridos.every((permiso) =>
-            permisosUsuario.includes(permiso)
+        const tieneTodosLosPermisos = permisosRequeridos.every(
+            (permiso) => permisosUsuario.includes(permiso)
         );
 
-        if (!tienePermiso) {
+        if (!tieneTodosLosPermisos) {
             return res.status(403).json({
                 success: false,
                 message: 'No tenés permisos para realizar esta operación'
