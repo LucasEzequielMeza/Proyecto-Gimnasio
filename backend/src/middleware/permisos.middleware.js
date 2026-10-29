@@ -7,8 +7,10 @@ export const requierePermiso = (...permisosRequeridos) => {
             });
         }
 
+        const permisosUsuario = req.usuario.permisos ?? [];
+
         const tienePermiso = permisosRequeridos.every((permiso) =>
-            req.usuario.permisos.includes(permiso)
+            permisosUsuario.includes(permiso)
         );
 
         if (!tienePermiso) {

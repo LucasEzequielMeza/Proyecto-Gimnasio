@@ -1,34 +1,25 @@
 import { Router } from 'express';
 import {
-    registrar,
     iniciarSesion,
     cerrarSesion,
     obtenerSesion
 } from './auth.controller.js';
 import { validateSchema } from '../../middleware/validacion.middleware.js';
+import { loginSchema } from './auth.schemas.js';
 import {
-    registroSchema,
-    loginSchema
-} from './auth.schemas.js';
-import {
-    limiteLogin,
-    limiteRegistro
+    limiteLogin
 } from '../../middleware/limiteAutorizacion.middleware.js';
-import { estaAutenticado } from '../../middleware/autenticacion.middleware.js';
+
+import {
+    estaAutenticado
+} from '../../middleware/autenticacion.middleware.js';
+
 import {
     verificarOrigen,
     verificarCsrf
 } from '../../middleware/csrf.middleware.js';
 
 const router = Router();
-
-router.post(
-    '/register',
-    verificarOrigen,
-    limiteRegistro,
-    validateSchema(registroSchema),
-    registrar
-);
 
 router.post(
     '/login',
@@ -46,6 +37,10 @@ router.post(
     cerrarSesion
 );
 
-router.get('/perfil', estaAutenticado, obtenerSesion);
+router.get(
+    '/perfil',
+    estaAutenticado,
+    obtenerSesion
+);
 
 export default router;

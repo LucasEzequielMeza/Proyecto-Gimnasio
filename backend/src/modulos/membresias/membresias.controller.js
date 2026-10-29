@@ -119,6 +119,26 @@ const revertirTransaccion = async (cliente, transaccionIniciada) => {
     }
 };
 
+const actualizarVencimientosAntesDeOperar = async (res, operacion) => {
+    try {
+        await actualizarMembresiasVencidas();
+        return true;
+    } catch (error) {
+        console.error(
+            `Error al actualizar vencimientos antes de ${operacion}:`,
+            error
+        );
+
+        responderError(
+            res,
+            500,
+            'No se pudieron actualizar los vencimientos de las membresías'
+        );
+
+        return false;
+    }
+};
+
 export const listarMembresias = async (req, res) => {
     const validacion = listarMembresiasSchema.safeParse(req.query);
 
@@ -135,8 +155,6 @@ export const listarMembresias = async (req, res) => {
         busqueda,
     } = validacion.data;
 
-    const usuarioEsCliente = esCliente(req);
-
     const condiciones = [];
     const valores = [];
 
@@ -147,7 +165,7 @@ export const listarMembresias = async (req, res) => {
         );
     };
 
-    if (usuarioEsCliente) {
+    if (esCliente(req)) {
         agregarCondicion('c.usuario_id = ?', req.usuario.id);
     } else if (cliente_id) {
         agregarCondicion('m.cliente_id = ?', cliente_id);
@@ -252,6 +270,15 @@ export const obtenerMembresia = async (req, res) => {
         return;
     }
 
+    if (
+        !(await actualizarVencimientosAntesDeOperar(
+            res,
+            'consultar una membresía'
+        ))
+    ) {
+        return;
+    }
+
     const valores = [id];
     let condicionPropietario = '';
 
@@ -261,8 +288,6 @@ export const obtenerMembresia = async (req, res) => {
     }
 
     try {
-        await actualizarMembresiasVencidas();
-
         const resultado = await pool.query(
             `
                 SELECT
@@ -332,6 +357,19 @@ export const crearMembresia = async (req, res) => {
         fecha_inicio,
     } = validacion.data;
 
+    /*
+     * Actualizo los vencimientos antes de abrir la transacción para evitar
+     * que una segunda conexión intente modificar una membresía bloqueada.
+     */
+    if (
+        !(await actualizarVencimientosAntesDeOperar(
+            res,
+            'crear una membresía'
+        ))
+    ) {
+        return;
+    }
+
     const cliente = await pool.connect();
     let transaccionIniciada = false;
 
@@ -383,7 +421,14 @@ export const crearMembresia = async (req, res) => {
 
         const resultadoPlan = await cliente.query(
             `
-                SELECT id, nombre, precio, moneda, tipo_plan, duracion_dias
+                SELECT
+                    id,
+                    nombre,
+                    precio,
+                    moneda,
+                    tipo,
+                    duracion_dias,
+                    estado
                 FROM planes
                 WHERE id = $1
                 FOR SHARE
@@ -400,7 +445,7 @@ export const crearMembresia = async (req, res) => {
 
         const plan = resultadoPlan.rows[0];
 
-        if (plan.estado !== undefined && plan.estado !== 'activo') {
+        if (plan.estado !== 'activo') {
             await revertirTransaccion(cliente, transaccionIniciada);
             transaccionIniciada = false;
 
@@ -411,8 +456,6 @@ export const crearMembresia = async (req, res) => {
             );
         }
 
-        await actualizarMembresiasVencidas();
-
         const membresiaActiva = await cliente.query(
             `
                 SELECT id
@@ -420,6 +463,7 @@ export const crearMembresia = async (req, res) => {
                 WHERE cliente_id = $1
                   AND estado = 'ACTIVA'
                 LIMIT 1
+                FOR UPDATE
             `,
             [cliente_id]
         );
@@ -437,7 +481,7 @@ export const crearMembresia = async (req, res) => {
 
         const fechaFin = calcularFechaFin(
             fechaInicio,
-            plan.tipo_plan,
+            plan.tipo,
             plan.duracion_dias
         );
 
@@ -464,7 +508,7 @@ export const crearMembresia = async (req, res) => {
                 fechaFin,
                 plan.precio,
                 plan.moneda,
-                plan.tipo_plan,
+                plan.tipo,
                 plan.duracion_dias,
             ]
         );
@@ -532,9 +576,11 @@ export const editarMembresia = async (req, res) => {
 
         const resultado = await cliente.query(
             `
-                SELECT *
-                FROM membresias
-                WHERE id = $1
+                SELECT
+                    m.*,
+                    TO_CHAR(m.fecha_fin, 'YYYY-MM-DD') AS fecha_fin_iso
+                FROM membresias m
+                WHERE m.id = $1
                 FOR UPDATE
             `,
             [id]
@@ -562,7 +608,7 @@ export const editarMembresia = async (req, res) => {
 
         const hoy = await obtenerFechaActual(cliente);
 
-        if (membresia.fecha_fin < hoy) {
+        if (membresia.fecha_fin_iso < hoy) {
             await cliente.query(
                 `
                     UPDATE membresias
@@ -676,9 +722,11 @@ export const cambiarEstadoMembresia = async (req, res) => {
 
         const resultado = await cliente.query(
             `
-                SELECT *
-                FROM membresias
-                WHERE id = $1
+                SELECT
+                    m.*,
+                    TO_CHAR(m.fecha_fin, 'YYYY-MM-DD') AS fecha_fin_iso
+                FROM membresias m
+                WHERE m.id = $1
                 FOR UPDATE
             `,
             [id]
@@ -706,7 +754,7 @@ export const cambiarEstadoMembresia = async (req, res) => {
 
         const hoy = await obtenerFechaActual(cliente);
 
-        if (membresia.fecha_fin < hoy) {
+        if (membresia.fecha_fin_iso < hoy) {
             await cliente.query(
                 `
                     UPDATE membresias

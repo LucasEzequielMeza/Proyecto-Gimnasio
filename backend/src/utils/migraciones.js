@@ -15,6 +15,7 @@ const directorioMigraciones = path.join(
 );
 
 const versionBaseline = '000_initial_baseline';
+const claveBloqueo = 'proyectogym_migraciones';
 
 const tablasIniciales = [
     'usuarios',
@@ -28,6 +29,20 @@ function calcularChecksum(contenido) {
     return createHash('sha256')
         .update(contenido, 'utf8')
         .digest('hex');
+}
+
+function quitarTransaccionExterna(contenido) {
+    /*
+     * Centralizo el control transaccional en el gestor de migraciones.
+     * Algunas migraciones tienen BEGIN y COMMIT propios; los retiro
+     * únicamente si aparecen como instrucciones al inicio y al final.
+     */
+    let sql = contenido.trim();
+
+    sql = sql.replace(/^BEGIN\s*;\s*/i, '');
+    sql = sql.replace(/\s*COMMIT\s*;\s*$/i, '');
+
+    return sql.trim();
 }
 
 async function verificarEsquemaInicial(cliente) {
@@ -46,7 +61,7 @@ async function verificarEsquemaInicial(cliente) {
 
     if (faltantes.length > 0) {
         throw new Error(
-            `La base de datos no tiene el esquema inicial completo. ` +
+            'La base de datos no tiene el esquema inicial completo. ' +
             `Faltan las tablas: ${faltantes.join(', ')}. ` +
             'Inicializá la base con database/init.sql antes de iniciar el servidor.'
         );
@@ -72,8 +87,10 @@ export async function ejecutarMigraciones() {
 
     try {
         await cliente.query(
-            "SELECT pg_advisory_lock(hashtext('proyectogym_migraciones'))"
+            'SELECT pg_advisory_lock(hashtext($1))',
+            [claveBloqueo]
         );
+
         bloqueoAdquirido = true;
 
         await verificarEsquemaInicial(cliente);
@@ -106,9 +123,11 @@ export async function ejecutarMigraciones() {
         if (!aplicadas.has(versionBaseline)) {
             await cliente.query(
                 `INSERT INTO schema_migrations (
-                    version, descripcion, checksum
-                 )
-                 VALUES ($1, $2, NULL)`,
+                    version,
+                    descripcion,
+                    checksum
+                )
+                VALUES ($1, $2, NULL)`,
                 [
                     versionBaseline,
                     'Registro inicial de la estructura existente de ProyectoGym'
@@ -116,6 +135,7 @@ export async function ejecutarMigraciones() {
             );
 
             aplicadas.set(versionBaseline, null);
+
             console.log('Registro inicial de la base de datos verificado.');
         } else if (aplicadas.get(versionBaseline) !== null) {
             throw new Error(
@@ -163,11 +183,19 @@ export async function ejecutarMigraciones() {
                 if (aplicadas.get(version) !== checksum) {
                     throw new Error(
                         `La migración ${archivo} ya fue aplicada, ` +
-                        'pero su contenido cambió.'
+                        'pero su contenido cambió. No modifiques migraciones aplicadas.'
                     );
                 }
 
                 continue;
+            }
+
+            const sql = quitarTransaccionExterna(contenido);
+
+            if (!sql) {
+                throw new Error(
+                    `La migración ${archivo} no contiene instrucciones SQL.`
+                );
             }
 
             console.log(`Aplicando migración: ${archivo}`);
@@ -175,13 +203,19 @@ export async function ejecutarMigraciones() {
             await cliente.query('BEGIN');
 
             try {
-                await cliente.query(contenido);
+                /*
+                 * Ejecuto el SQL y guardo su checksum en la misma
+                 * transacción para evitar registrar migraciones fallidas.
+                 */
+                await cliente.query(sql);
 
                 await cliente.query(
                     `INSERT INTO schema_migrations (
-                        version, descripcion, checksum
-                     )
-                     VALUES ($1, $2, $3)`,
+                        version,
+                        descripcion,
+                        checksum
+                    )
+                    VALUES ($1, $2, $3)`,
                     [
                         version,
                         `Migración aplicada desde ${archivo}`,
@@ -190,6 +224,7 @@ export async function ejecutarMigraciones() {
                 );
 
                 await cliente.query('COMMIT');
+
                 aplicadas.set(version, checksum);
 
                 console.log(`Migración aplicada: ${archivo}`);
@@ -203,7 +238,10 @@ export async function ejecutarMigraciones() {
                     );
                 }
 
-                throw error;
+                throw new Error(
+                    `Falló la migración ${archivo}: ${error.message}`,
+                    { cause: error }
+                );
             }
         }
 
@@ -211,9 +249,18 @@ export async function ejecutarMigraciones() {
     } finally {
         try {
             if (bloqueoAdquirido) {
-                await cliente.query(
-                    "SELECT pg_advisory_unlock(hashtext('proyectogym_migraciones'))"
-                );
+                try {
+                    await cliente.query(
+                        'SELECT pg_advisory_unlock(hashtext($1))',
+                        [claveBloqueo]
+                    );
+                } catch (error) {
+                    console.error(
+                        'No se pudo liberar explícitamente el bloqueo de migraciones. ' +
+                        'Se liberará al cerrar la conexión:',
+                        error.message
+                    );
+                }
             }
         } finally {
             cliente.release();

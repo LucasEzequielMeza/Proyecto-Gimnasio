@@ -7,6 +7,8 @@ import {
     cambiarRolesUsuarioSchema
 } from './usuarios.schemas.js';
 
+const BLOQUEO_ADMINISTRADORES = [734921, 1];
+
 const responderErrorInterno = (res, mensaje, error) => {
     console.error(mensaje, error.message);
 
@@ -45,6 +47,38 @@ const camposUsuario = `
     created_at AS creado_at,
     updated_at AS actualizado_at
 `;
+
+const revertirTransaccion = async (conexion, transaccionIniciada) => {
+    if (!conexion || !transaccionIniciada) {
+        return;
+    }
+
+    try {
+        await conexion.query('ROLLBACK');
+    } catch (error) {
+        console.error('Error al revertir la transacción:', error.message);
+    }
+};
+
+const bloquearCambiosAdministrativos = async (conexion) => {
+    await conexion.query(
+        'SELECT pg_advisory_xact_lock($1, $2)',
+        BLOQUEO_ADMINISTRADORES
+    );
+};
+
+const contarAdministradoresActivos = async (conexion) => {
+    const resultado = await conexion.query(
+        `SELECT COUNT(DISTINCT ur.usuario_id)::INTEGER AS total
+         FROM usuario_roles ur
+         INNER JOIN roles r ON r.id = ur.rol_id
+         INNER JOIN usuarios u ON u.id = ur.usuario_id
+         WHERE r.nombre = 'ADMIN'
+           AND u.estado = 'activo'`
+    );
+
+    return resultado.rows[0].total;
+};
 
 export const listarUsuarios = async (req, res) => {
     const validacion = listarUsuariosSchema.safeParse(req.query);
@@ -86,8 +120,9 @@ export const listarUsuarios = async (req, res) => {
             : '';
 
         const resultadoTotal = await pool.query(
-            `SELECT COUNT(*)::int AS total
-             FROM usuarios ${where}`,
+            `SELECT COUNT(*)::INTEGER AS total
+             FROM usuarios
+             ${where}`,
             valores
         );
 
@@ -112,7 +147,7 @@ export const listarUsuarios = async (req, res) => {
                 `SELECT ur.usuario_id, r.nombre AS rol
                  FROM usuario_roles ur
                  INNER JOIN roles r ON r.id = ur.rol_id
-                 WHERE ur.usuario_id = ANY($1::uuid[])
+                 WHERE ur.usuario_id = ANY($1::UUID[])
                  ORDER BY r.nombre`,
                 [ids]
             );
@@ -148,7 +183,10 @@ export const listarUsuarios = async (req, res) => {
 
 export const obtenerUsuario = async (req, res) => {
     const id = validarId(req, res);
-    if (!id) return;
+
+    if (!id) {
+        return;
+    }
 
     try {
         const resultadoUsuario = await pool.query(
@@ -205,7 +243,10 @@ export const obtenerUsuario = async (req, res) => {
 
 export const cambiarEstadoUsuario = async (req, res) => {
     const id = validarId(req, res);
-    if (!id) return;
+
+    if (!id) {
+        return;
+    }
 
     const validacion = cambiarEstadoUsuarioSchema.safeParse(req.body);
 
@@ -230,27 +271,75 @@ export const cambiarEstadoUsuario = async (req, res) => {
     }
 
     let conexion;
+    let transaccionIniciada = false;
 
     try {
         conexion = await pool.connect();
-        await conexion.query('BEGIN');
 
-        const resultado = await conexion.query(
-            `UPDATE usuarios
-             SET estado = $2, updated_at = NOW()
+        await conexion.query('BEGIN');
+        transaccionIniciada = true;
+
+        /*
+         * Uso el mismo bloqueo que en los cambios de roles para evitar
+         * que dos operaciones simultáneas eliminen al último ADMIN activo.
+         */
+        await bloquearCambiosAdministrativos(conexion);
+
+        const resultadoUsuario = await conexion.query(
+            `SELECT id, estado
+             FROM usuarios
              WHERE id = $1
-             RETURNING ${camposUsuario}`,
-            [id, estado]
+             FOR UPDATE`,
+            [id]
         );
 
-        if (resultado.rowCount === 0) {
-            await conexion.query('ROLLBACK');
+        if (resultadoUsuario.rowCount === 0) {
+            await revertirTransaccion(conexion, transaccionIniciada);
+            transaccionIniciada = false;
 
             return res.status(404).json({
                 success: false,
                 message: 'Usuario no encontrado'
             });
         }
+
+        if (estado !== 'activo') {
+            const resultadoEsAdmin = await conexion.query(
+                `SELECT EXISTS (
+                    SELECT 1
+                    FROM usuario_roles ur
+                    INNER JOIN roles r ON r.id = ur.rol_id
+                    WHERE ur.usuario_id = $1
+                      AND r.nombre = 'ADMIN'
+                ) AS es_admin`,
+                [id]
+            );
+
+            if (resultadoEsAdmin.rows[0].es_admin) {
+                const totalAdministradores = await contarAdministradoresActivos(
+                    conexion
+                );
+
+                if (totalAdministradores <= 1) {
+                    await revertirTransaccion(conexion, transaccionIniciada);
+                    transaccionIniciada = false;
+
+                    return res.status(409).json({
+                        success: false,
+                        message: 'No se puede desactivar la última cuenta administradora activa'
+                    });
+                }
+            }
+        }
+
+        const resultado = await conexion.query(
+            `UPDATE usuarios
+             SET estado = $2,
+                 updated_at = NOW()
+             WHERE id = $1
+             RETURNING ${camposUsuario}`,
+            [id, estado]
+        );
 
         if (estado !== 'activo') {
             await conexion.query(
@@ -263,6 +352,7 @@ export const cambiarEstadoUsuario = async (req, res) => {
         }
 
         await conexion.query('COMMIT');
+        transaccionIniciada = false;
 
         return res.status(200).json({
             success: true,
@@ -270,16 +360,7 @@ export const cambiarEstadoUsuario = async (req, res) => {
             usuario: resultado.rows[0]
         });
     } catch (error) {
-        if (conexion) {
-            try {
-                await conexion.query('ROLLBACK');
-            } catch (errorRollback) {
-                console.error(
-                    'Error al revertir cambio de estado:',
-                    errorRollback.message
-                );
-            }
-        }
+        await revertirTransaccion(conexion, transaccionIniciada);
 
         return responderErrorInterno(
             res,
@@ -293,7 +374,10 @@ export const cambiarEstadoUsuario = async (req, res) => {
 
 export const cambiarRolesUsuario = async (req, res) => {
     const id = validarId(req, res);
-    if (!id) return;
+
+    if (!id) {
+        return;
+    }
 
     const validacion = cambiarRolesUsuarioSchema.safeParse(req.body);
 
@@ -321,19 +405,22 @@ export const cambiarRolesUsuario = async (req, res) => {
     }
 
     let conexion;
+    let transaccionIniciada = false;
 
     try {
         conexion = await pool.connect();
-        await conexion.query('BEGIN');
 
-        // Serializa los cambios de roles para proteger al último ADMIN.
-        await conexion.query(
-            'SELECT pg_advisory_xact_lock($1, $2)',
-            [734921, 1]
-        );
+        await conexion.query('BEGIN');
+        transaccionIniciada = true;
+
+        /*
+         * Serializo los cambios de roles y estados para proteger
+         * la existencia de al menos un administrador activo.
+         */
+        await bloquearCambiosAdministrativos(conexion);
 
         const resultadoUsuario = await conexion.query(
-            `SELECT id
+            `SELECT id, estado
              FROM usuarios
              WHERE id = $1
              FOR UPDATE`,
@@ -341,7 +428,8 @@ export const cambiarRolesUsuario = async (req, res) => {
         );
 
         if (resultadoUsuario.rowCount === 0) {
-            await conexion.query('ROLLBACK');
+            await revertirTransaccion(conexion, transaccionIniciada);
+            transaccionIniciada = false;
 
             return res.status(404).json({
                 success: false,
@@ -352,13 +440,14 @@ export const cambiarRolesUsuario = async (req, res) => {
         const resultadoRoles = await conexion.query(
             `SELECT id, nombre
              FROM roles
-             WHERE nombre = ANY($1::varchar[])
+             WHERE nombre = ANY($1::VARCHAR[])
              ORDER BY nombre`,
             [rolesSolicitados]
         );
 
         if (resultadoRoles.rowCount !== rolesSolicitados.length) {
-            await conexion.query('ROLLBACK');
+            await revertirTransaccion(conexion, transaccionIniciada);
+            transaccionIniciada = false;
 
             const rolesEncontrados = new Set(
                 resultadoRoles.rows.map((rol) => rol.nombre)
@@ -385,22 +474,21 @@ export const cambiarRolesUsuario = async (req, res) => {
                     INNER JOIN roles r ON r.id = ur.rol_id
                     WHERE ur.usuario_id = $1
                       AND r.nombre = 'ADMIN'
-                 ) AS es_admin`,
+                ) AS es_admin`,
                 [id]
             );
 
-            if (resultadoAdminActual.rows[0].es_admin) {
-                const resultadoCantidadAdmins = await conexion.query(
-                    `SELECT COUNT(DISTINCT ur.usuario_id)::int AS total
-                     FROM usuario_roles ur
-                     INNER JOIN roles r ON r.id = ur.rol_id
-                     INNER JOIN usuarios u ON u.id = ur.usuario_id
-                     WHERE r.nombre = 'ADMIN'
-                       AND u.estado = 'activo'`
+            const usuarioEsAdmin = resultadoAdminActual.rows[0].es_admin;
+            const usuarioEstaActivo = resultadoUsuario.rows[0].estado === 'activo';
+
+            if (usuarioEsAdmin && usuarioEstaActivo) {
+                const totalAdministradores = await contarAdministradoresActivos(
+                    conexion
                 );
 
-                if (resultadoCantidadAdmins.rows[0].total <= 1) {
-                    await conexion.query('ROLLBACK');
+                if (totalAdministradores <= 1) {
+                    await revertirTransaccion(conexion, transaccionIniciada);
+                    transaccionIniciada = false;
 
                     return res.status(409).json({
                         success: false,
@@ -425,6 +513,7 @@ export const cambiarRolesUsuario = async (req, res) => {
         }
 
         await conexion.query('COMMIT');
+        transaccionIniciada = false;
 
         return res.status(200).json({
             success: true,
@@ -433,16 +522,7 @@ export const cambiarRolesUsuario = async (req, res) => {
             roles: resultadoRoles.rows.map((rol) => rol.nombre)
         });
     } catch (error) {
-        if (conexion) {
-            try {
-                await conexion.query('ROLLBACK');
-            } catch (errorRollback) {
-                console.error(
-                    'Error al revertir roles:',
-                    errorRollback.message
-                );
-            }
-        }
+        await revertirTransaccion(conexion, transaccionIniciada);
 
         return responderErrorInterno(
             res,
