@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import {
+    crearUsuario,
     listarUsuarios,
     obtenerUsuario,
     cambiarEstadoUsuario,
@@ -20,6 +21,14 @@ import {
 const router = Router();
 
 router.use(estaAutenticado);
+
+router.post(
+    '/',
+    verificarOrigen,
+    verificarCsrf,
+    requierePermiso('usuarios.crear'),
+    crearUsuario
+);
 
 router.get(
     '/',

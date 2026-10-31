@@ -1,6 +1,8 @@
 import { pool } from '../../db.js';
+import bcrypt from 'bcrypt';
 
 import {
+    crearUsuarioSchema,
     listarUsuariosSchema,
     idUsuarioSchema,
     cambiarEstadoUsuarioSchema,
@@ -78,6 +80,143 @@ const contarAdministradoresActivos = async (conexion) => {
     );
 
     return resultado.rows[0].total;
+};
+
+export const crearUsuario = async (req, res) => {
+    const validacion = crearUsuarioSchema.safeParse(req.body);
+
+    if (!validacion.success) {
+        return res.status(400).json({
+            success: false,
+            message: 'Los datos enviados no son válidos',
+            errores: validacion.error.issues.map((issue) => ({
+                campo: issue.path.join('.'),
+                mensaje: issue.message
+            }))
+        });
+    }
+
+    const {
+        nombre,
+        apellido,
+        email,
+        password,
+        roles
+    } = validacion.data;
+
+    let conexion;
+    let transaccionIniciada = false;
+
+    try {
+        conexion = await pool.connect();
+
+        await conexion.query('BEGIN');
+        transaccionIniciada = true;
+
+        const existente = await conexion.query(
+            `SELECT id
+             FROM usuarios
+             WHERE LOWER(email) = $1
+             LIMIT 1`,
+            [email]
+        );
+
+        if (existente.rowCount > 0) {
+            await revertirTransaccion(conexion, transaccionIniciada);
+            transaccionIniciada = false;
+
+            return res.status(409).json({
+                success: false,
+                message: 'Ya existe una cuenta con ese correo electrónico'
+            });
+        }
+
+        const resultadoRoles = await conexion.query(
+            `SELECT id, nombre
+             FROM roles
+             WHERE nombre = ANY($1::VARCHAR[])
+             ORDER BY nombre`,
+            [roles]
+        );
+
+        if (resultadoRoles.rowCount !== roles.length) {
+            const rolesEncontrados = new Set(
+                resultadoRoles.rows.map((rol) => rol.nombre)
+            );
+
+            await revertirTransaccion(conexion, transaccionIniciada);
+            transaccionIniciada = false;
+
+            return res.status(400).json({
+                success: false,
+                message: 'Uno o más roles no existen',
+                rolesInvalidos: roles.filter(
+                    (rol) => !rolesEncontrados.has(rol)
+                )
+            });
+        }
+
+        const passwordHash = await bcrypt.hash(password, 12);
+
+        const resultadoUsuario = await conexion.query(
+            `INSERT INTO usuarios (
+                nombre,
+                apellido,
+                email,
+                password_hash
+            )
+            VALUES ($1, $2, $3, $4)
+            RETURNING ${camposUsuario}`,
+            [
+                nombre,
+                apellido,
+                email,
+                passwordHash
+            ]
+        );
+
+        const usuario = resultadoUsuario.rows[0];
+
+        for (const rol of resultadoRoles.rows) {
+            await conexion.query(
+                `INSERT INTO usuario_roles (
+                    usuario_id,
+                    rol_id
+                )
+                VALUES ($1, $2)`,
+                [usuario.id, rol.id]
+            );
+        }
+
+        await conexion.query('COMMIT');
+        transaccionIniciada = false;
+
+        return res.status(201).json({
+            success: true,
+            message: 'Usuario creado correctamente',
+            usuario: {
+                ...usuario,
+                roles: resultadoRoles.rows.map((rol) => rol.nombre)
+            }
+        });
+    } catch (error) {
+        await revertirTransaccion(conexion, transaccionIniciada);
+
+        if (error.code === '23505') {
+            return res.status(409).json({
+                success: false,
+                message: 'Ya existe una cuenta con ese correo electrónico'
+            });
+        }
+
+        return responderErrorInterno(
+            res,
+            'Error al crear usuario:',
+            error
+        );
+    } finally {
+        conexion?.release();
+    }
 };
 
 export const listarUsuarios = async (req, res) => {
