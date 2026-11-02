@@ -9,6 +9,16 @@ const textoOpcional = (maximo) => z.preprocess(
         .optional()
 );
 
+const numeroOpcional = (maximo, campo) => z.preprocess(
+    (valor) => valor === '' ? null : valor,
+    z.string()
+        .trim()
+        .max(maximo, `${campo} no puede superar los ${maximo} caracteres`)
+        .regex(/^\d+$/, `${campo} solamente puede contener números`)
+        .nullable()
+        .optional()
+);
+
 const emailOpcional = z.preprocess(
     (valor) => valor === '' ? null : valor,
     z.string()
@@ -49,12 +59,37 @@ const esFechaReal = (valor) => {
     );
 };
 
+const cumpleEdadMinima = (valor) => {
+    if (!esFechaReal(valor)) {
+        return true;
+    }
+
+    const [anio, mes, dia] = valor.split('-').map(Number);
+    const hoy = new Date();
+
+    let edad = hoy.getFullYear() - anio;
+
+    const aunNoCumplio =
+        hoy.getMonth() + 1 < mes ||
+        (hoy.getMonth() + 1 === mes && hoy.getDate() < dia);
+
+    if (aunNoCumplio) {
+        edad--;
+    }
+
+    return edad >= 14;
+};
+
 const fechaOpcional = z.preprocess(
     (valor) => valor === '' ? null : valor,
     z.string()
         .refine(
             esFechaReal,
             'La fecha debe ser válida y tener formato YYYY-MM-DD'
+        )
+        .refine(
+            cumpleEdadMinima,
+            'El cliente debe tener al menos 14 años'
         )
         .nullable()
         .optional()
@@ -101,15 +136,18 @@ export const crearClienteSchema = z.object({
         .min(1, 'El apellido es obligatorio')
         .max(100, 'El apellido no puede superar los 100 caracteres'),
 
-    documento: textoOpcional(30),
+    documento: numeroOpcional(8, 'El documento'),
     email: emailOpcional,
-    telefono: textoOpcional(30),
+    telefono: numeroOpcional(15, 'El teléfono'),
 
     fecha_nacimiento: fechaOpcional,
     direccion: textoOpcional(250),
 
     contacto_emergencia_nombre: textoOpcional(150),
-    contacto_emergencia_telefono: textoOpcional(30),
+    contacto_emergencia_telefono: numeroOpcional(
+        15,
+        'El teléfono de emergencia'
+    ),
 
     observaciones: z.preprocess(
         (valor) => valor === '' ? null : valor,

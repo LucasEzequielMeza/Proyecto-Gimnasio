@@ -27,28 +27,53 @@ const camposCliente = `
 `;
 
 const responderValidacion = (res, error, mensaje) => {
+    const errores = {};
+
+    for (const issue of error.issues) {
+        const campo = issue.path.join('.') || 'general';
+
+        if (!errores[campo]) {
+            errores[campo] = [];
+        }
+
+        errores[campo].push(issue.message);
+    }
+
     return res.status(400).json({
         success: false,
         message: mensaje,
-        errores: error.issues.map((issue) => ({
-            campo: issue.path.join('.'),
-            mensaje: issue.message
-        }))
+        errors: errores
     });
 };
 
 const responderError = (res, error) => {
     if (error.code === '23505') {
+        const campoDuplicado = error.constraint?.includes('documento')
+            ? 'documento'
+            : error.constraint?.includes('email')
+                ? 'email'
+                : null;
+
         return res.status(409).json({
             success: false,
-            message: 'Ya existe un cliente con ese documento, email o cuenta vinculada'
+            message: 'Ya existe un cliente con ese documento, email o cuenta vinculada',
+            errors: campoDuplicado
+                ? {
+                    [campoDuplicado]: [
+                        campoDuplicado === 'documento'
+                            ? 'Ya existe un cliente registrado con ese documento'
+                            : 'Ya existe un cliente registrado con ese email'
+                    ]
+                }
+                : {}
         });
     }
 
     if (error.code === '23503') {
         return res.status(400).json({
             success: false,
-            message: 'La cuenta de usuario indicada no existe'
+            message: 'La cuenta de usuario indicada no existe',
+            errors: {}
         });
     }
 
@@ -59,7 +84,8 @@ const responderError = (res, error) => {
     ) {
         return res.status(400).json({
             success: false,
-            message: 'Los datos enviados no son válidos'
+            message: 'Los datos enviados no son válidos',
+            errors: {}
         });
     }
 
@@ -67,7 +93,8 @@ const responderError = (res, error) => {
 
     return res.status(500).json({
         success: false,
-        message: 'Error interno del servidor'
+        message: 'Error interno del servidor',
+        errors: {}
     });
 };
 
@@ -281,7 +308,8 @@ export const editarCliente = async (req, res) => {
         if (asignaciones.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Tenés que enviar al menos un campo para actualizar'
+                message: 'Tenés que enviar al menos un campo para actualizar',
+                errors: {}
             });
         }
 
