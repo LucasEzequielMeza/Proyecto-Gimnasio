@@ -6,6 +6,9 @@ import ClientesPage from '../modules/clientes/pages/ClientesPage';
 import ClienteNuevoPage from '../modules/clientes/pages/ClienteNuevoPage';
 import ClienteEditarPage from '../modules/clientes/pages/ClienteEditarPage';
 import ClienteDetallePage from '../modules/clientes/pages/ClienteDetallePage';
+import PlanesPage from '../modules/planes/pages/PlanesPage';
+import PlanNuevoPage from '../modules/planes/pages/PlanNuevoPage';
+import PlanEditarPage from '../modules/planes/pages/PlanEditarPage';
 
 import MainLayout from '../layouts/MainLayout';
 import RutaProtegida from './RutaProtegida';
@@ -22,6 +25,10 @@ function AppRouter() {
                     <Route path="/clientes/nuevo" element={<ClienteNuevoPage />} />
                     <Route path="/clientes/:id/editar" element={<ClienteEditarPage />} />
                     <Route path="/clientes/:id" element={<ClienteDetallePage />} />
+                    <Route path="/planes" element={<PlanesPage />} />
+                    <Route path="/planes/nuevo" element={<PlanNuevoPage />}/>
+                    <Route path="/planes/:id/editar" element={<PlanEditarPage />}
+                    />
                 </Route>
             </Route>
 

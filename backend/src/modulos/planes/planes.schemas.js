@@ -1,8 +1,6 @@
 import { z } from 'zod';
 
-// --------------------------------------------------
-// Campos reutilizables
-// --------------------------------------------------
+/* Defino los campos reutilizables para validar los planes. */
 
 const nombreSchema = z
     .string({
@@ -31,22 +29,16 @@ const precioSchema = z
                 : 'El precio debe ser un número'
     })
     .finite('El precio debe ser un número válido')
-    .min(0, 'El precio no puede ser negativo')
-    .max(9999999999.99, 'El precio supera el máximo permitido')
+    .min(500, 'El precio mínimo permitido es $500')
+    .max(9999999500, 'El precio supera el máximo permitido')
     .refine(
-        (precio) =>
-            Math.abs(precio * 100 - Math.round(precio * 100)) < 1e-7,
-        'El precio no puede tener más de dos decimales'
+        (precio) => Number.isInteger(precio / 500),
+        'El precio debe aumentar en incrementos de $500'
     );
 
-const monedaSchema = z
-    .string({
-        error: 'La moneda debe ser un texto'
-    })
-    .trim()
-    .length(3, 'La moneda debe tener exactamente tres letras')
-    .regex(/^[A-Za-z]{3}$/, 'La moneda debe contener solo letras')
-    .transform((moneda) => moneda.toUpperCase());
+const monedaSchema = z.literal('ARS', {
+    error: 'La moneda de los planes debe ser ARS'
+});
 
 const tipoSchema = z.enum(['FIJO', 'MENSUAL'], {
     error: 'El tipo debe ser FIJO o MENSUAL'
@@ -64,9 +56,7 @@ const estadoSchema = z.enum(['activo', 'inactivo'], {
     error: 'El estado debe ser activo o inactivo'
 });
 
-// --------------------------------------------------
-// Listar planes
-// --------------------------------------------------
+/* Valido los filtros y la paginación del listado. */
 
 export const listarPlanesSchema = z
     .object({
@@ -110,9 +100,7 @@ export const listarPlanesSchema = z
     })
     .strict();
 
-// --------------------------------------------------
-// Validar ID de plan
-// --------------------------------------------------
+/* Verifico que el identificador tenga formato UUID. */
 
 export const idPlanSchema = z
     .string({
@@ -120,9 +108,7 @@ export const idPlanSchema = z
     })
     .uuid('El ID del plan no tiene un formato UUID válido');
 
-// --------------------------------------------------
-// Crear plan
-// --------------------------------------------------
+/* Valido los datos necesarios para crear un plan. */
 
 export const crearPlanSchema = z
     .object({
@@ -159,9 +145,7 @@ export const crearPlanSchema = z
         }
     });
 
-// --------------------------------------------------
-// Editar plan
-// --------------------------------------------------
+/* Valido los campos que se pueden modificar de un plan existente. */
 
 export const editarPlanSchema = z
     .object({
@@ -170,8 +154,6 @@ export const editarPlanSchema = z
         descripcion: descripcionSchema.optional(),
 
         precio: precioSchema.optional(),
-
-        moneda: monedaSchema.optional(),
 
         tipo: tipoSchema.optional(),
 
@@ -195,9 +177,7 @@ export const editarPlanSchema = z
         }
     });
 
-// --------------------------------------------------
-// Cambiar estado del plan
-// --------------------------------------------------
+/* Valido los cambios de estado de un plan. */
 
 export const cambiarEstadoPlanSchema = z
     .object({
