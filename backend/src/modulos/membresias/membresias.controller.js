@@ -23,7 +23,12 @@ const responderError = (res, status, message) => {
 const tienePermiso = (req, permiso) =>
     req.usuario?.permisos?.includes(permiso) ?? false;
 
-const esCliente = (req) => req.usuario?.roles?.includes('CLIENTE') ?? false;
+const esAdministradorORecepcion = (req) =>
+    req.usuario?.roles?.some(rol => ['ADMIN', 'RECEPCION'].includes(rol)) ?? false;
+
+const esCliente = (req) =>
+    !esAdministradorORecepcion(req) &&
+    (req.usuario?.roles?.includes('CLIENTE') ?? false);
 
 const obtenerFechaActual = async (cliente = pool) => {
     const resultado = await cliente.query(

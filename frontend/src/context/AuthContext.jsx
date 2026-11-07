@@ -8,8 +8,13 @@ import {
 import authService from '../modules/auth/services/authService';
 
 const AuthContext = createContext(null);
-
 const CLAVE_CSRF = 'proyectogym_csrf';
+
+const normalizarUsuario = (data) => ({
+    ...data.usuario,
+    roles: data.roles || data.usuario?.roles || [],
+    permisos: data.permisos || data.usuario?.permisos || []
+});
 
 export function AuthProvider({ children }) {
     const [usuario, setUsuario] = useState(null);
@@ -22,7 +27,7 @@ export function AuthProvider({ children }) {
         const verificarSesion = async () => {
             try {
                 const data = await authService.obtenerPerfil();
-                setUsuario(data.usuario);
+                setUsuario(normalizarUsuario(data));
             } catch {
                 setUsuario(null);
                 setCsrfToken(null);
@@ -39,11 +44,18 @@ export function AuthProvider({ children }) {
         const data = await authService.login(datos);
 
         sessionStorage.setItem(CLAVE_CSRF, data.csrfToken);
-
         setCsrfToken(data.csrfToken);
-        setUsuario(data.usuario);
 
-        return data;
+        /* Recupero el perfil completo para cargar también los roles y permisos. */
+        const perfil = await authService.obtenerPerfil();
+        const usuarioActual = normalizarUsuario(perfil);
+
+        setUsuario(usuarioActual);
+
+        return {
+            ...data,
+            usuario: usuarioActual
+        };
     };
 
     const cerrarSesion = async () => {
