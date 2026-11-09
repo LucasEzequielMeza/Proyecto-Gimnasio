@@ -133,20 +133,25 @@ export const listarAsistencias = async (req, res, next) => {
         const resultado = await pool.query(
             `SELECT
                 a.id,
-                a.cliente_id,
                 c.nombre AS cliente_nombre,
                 c.apellido AS cliente_apellido,
-                a.membresia_id,
+                p.nombre AS plan_nombre,
+                m.tipo_plan,
                 a.fecha,
                 a.fecha_hora,
-                a.registrado_por,
                 u.nombre AS registrado_por_nombre,
                 u.apellido AS registrado_por_apellido,
                 a.observaciones,
                 a.created_at
              FROM asistencias a
-             INNER JOIN clientes c ON c.id = a.cliente_id
-             INNER JOIN usuarios u ON u.id = a.registrado_por
+             INNER JOIN clientes c
+                ON c.id = a.cliente_id
+             INNER JOIN usuarios u
+                ON u.id = a.registrado_por
+             INNER JOIN membresias m
+                ON m.id = a.membresia_id
+             INNER JOIN planes p
+                ON p.id = m.plan_id
              ${where}
              ORDER BY a.fecha_hora DESC, a.id DESC
              LIMIT $${valores.length + 1}
@@ -208,17 +213,26 @@ export const obtenerAsistencia = async (req, res, next) => {
                 a.cliente_id,
                 c.nombre AS cliente_nombre,
                 c.apellido AS cliente_apellido,
-                a.membresia_id,
                 a.fecha,
                 a.fecha_hora,
                 a.registrado_por,
                 u.nombre AS registrado_por_nombre,
                 u.apellido AS registrado_por_apellido,
                 a.observaciones,
-                a.created_at
+                a.created_at,
+                p.nombre AS plan_nombre,
+                m.tipo_plan,
+                m.fecha_inicio AS membresia_fecha_inicio,
+                m.fecha_fin AS membresia_fecha_fin
              FROM asistencias a
-             INNER JOIN clientes c ON c.id = a.cliente_id
-             INNER JOIN usuarios u ON u.id = a.registrado_por
+             INNER JOIN clientes c
+                ON c.id = a.cliente_id
+             INNER JOIN usuarios u
+                ON u.id = a.registrado_por
+             INNER JOIN membresias m
+                ON m.id = a.membresia_id
+             INNER JOIN planes p
+                ON p.id = m.plan_id
              WHERE a.id = $1
              ${condicionPropietario}
              LIMIT 1`,

@@ -20,6 +20,9 @@ import MembresiaDetallePage from '../modules/membresias/pages/MembresiaDetallePa
 import PagosPage from '../modules/pagos/pages/PagosPage';
 import ObligacionDetallePage from '../modules/pagos/pages/ObligacionDetallePage';
 
+import AsistenciasPage from '../modules/asistencias/pages/AsistenciasPage';
+import AsistenciaDetallePage from '../modules/asistencias/pages/AsistenciaDetallePage';
+
 import MainLayout from '../layouts/MainLayout';
 import RutaProtegida from './RutaProtegida';
 
@@ -48,6 +51,10 @@ function AppRouter() {
 
                     <Route path="/pagos" element={<PagosPage />} />
                     <Route path="/pagos/obligaciones/:id" element={<ObligacionDetallePage />}/>
+
+                    <Route path="/asistencias" element={<AsistenciasPage />} />
+                    <Route path="/asistencias/:id" element={<AsistenciaDetallePage />}
+                    />
                 </Route>
             </Route>
 
