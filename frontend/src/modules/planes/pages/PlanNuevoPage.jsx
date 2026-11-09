@@ -8,13 +8,24 @@ import { useAuth } from '../../../context/AuthContext';
 
 function PlanNuevoPage() {
     const navegar = useNavigate();
-    const { csrfToken } = useAuth();
+    const { csrfToken, usuario } = useAuth();
+
+    const puedeCrear = usuario?.permisos?.includes('planes.crear') ?? false;
 
     const [guardando, setGuardando] = useState(false);
+    const [error, setError] = useState('');
+
+    if (!puedeCrear) {
+        navegar('/planes', { replace: true });
+        return null;
+    }
 
     async function manejarEnvio(datos) {
+        if (!puedeCrear || guardando) return;
+
         try {
             setGuardando(true);
+            setError('');
 
             const respuesta = await planesServicio.crear(datos, csrfToken);
 
@@ -24,6 +35,11 @@ function PlanNuevoPage() {
                     mensaje: respuesta.message || 'Plan creado correctamente'
                 }
             });
+        } catch (error) {
+            setError(
+                error.response?.data?.message ||
+                'No se pudo crear el plan.'
+            );
         } finally {
             setGuardando(false);
         }
@@ -50,6 +66,15 @@ function PlanNuevoPage() {
                     </p>
                 </div>
             </div>
+
+            {error && (
+                <div
+                    role="alert"
+                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+                >
+                    {error}
+                </div>
+            )}
 
             <PlanForm
                 onSubmit={manejarEnvio}

@@ -12,9 +12,17 @@ import {
 
 import TablaClientes from '../components/TablaClientes';
 import clientesServicio from '../services/clientesServicio';
+import { useAuth } from '../../../context/AuthContext';
 
 function ClientesPage() {
     const navigate = useNavigate();
+    const { usuario } = useAuth();
+
+    const permisos = usuario?.permisos ?? [];
+
+    const puedeConsultar = permisos.includes('clientes.consultar');
+    const puedeCrear = permisos.includes('clientes.crear');
+    const puedeEditar = permisos.includes('clientes.editar');
 
     const [clientes, setClientes] = useState([]);
     const [busqueda, setBusqueda] = useState('');
@@ -32,6 +40,11 @@ function ClientesPage() {
     const [error, setError] = useState('');
 
     const cargarClientes = useCallback(async () => {
+        if (!puedeConsultar) {
+            setCargando(false);
+            return;
+        }
+
         setCargando(true);
         setError('');
 
@@ -43,25 +56,36 @@ function ClientesPage() {
                 ...(estado && { estado })
             });
 
-            setClientes(respuesta.data);
-            setPaginacion(respuesta.paginacion);
+            setClientes(respuesta.data || []);
+            setPaginacion(respuesta.paginacion || {
+                pagina: 1,
+                limite: 20,
+                total: 0,
+                totalPaginas: 0
+            });
         } catch (error) {
             setError(
                 error.response?.data?.message ||
+                error.response?.data?.mensaje ||
                 'No se pudieron cargar los clientes.'
             );
         } finally {
             setCargando(false);
         }
-    }, [pagina, busqueda, estado]);
+    }, [pagina, busqueda, estado, puedeConsultar]);
 
     useEffect(() => {
+        if (!puedeConsultar) {
+            setCargando(false);
+            return undefined;
+        }
+
         const temporizador = setTimeout(() => {
             cargarClientes();
         }, 350);
 
         return () => clearTimeout(temporizador);
-    }, [cargarClientes]);
+    }, [cargarClientes, puedeConsultar]);
 
     const manejarBusqueda = (valor) => {
         setBusqueda(valor);
@@ -79,9 +103,26 @@ function ClientesPage() {
         setPagina(1);
     };
 
+    if (!puedeConsultar) {
+        return (
+            <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
+                <p className="font-medium text-slate-800">
+                    No tenés permiso para consultar clientes.
+                </p>
+
+                <button
+                    type="button"
+                    onClick={() => navigate('/')}
+                    className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                    Volver al inicio
+                </button>
+            </div>
+        );
+    }
+
     return (
         <div className="mx-auto max-w-7xl space-y-6">
-
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
                 <div>
                     <h1 className="text-2xl font-bold text-slate-900">
@@ -89,18 +130,20 @@ function ClientesPage() {
                     </h1>
 
                     <p className="mt-1 text-sm text-slate-500">
-                        Administrá los clientes de tu gimnasio.
+                        Consultá los clientes de tu gimnasio.
                     </p>
                 </div>
 
-                <button
-                    type="button"
-                    onClick={() => navigate('/clientes/nuevo')}
-                    className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
-                >
-                    <Plus size={19} />
-                    Nuevo cliente
-                </button>
+                {puedeCrear && (
+                    <button
+                        type="button"
+                        onClick={() => navigate('/clientes/nuevo')}
+                        className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+                    >
+                        <Plus size={19} />
+                        Nuevo cliente
+                    </button>
+                )}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -148,7 +191,6 @@ function ClientesPage() {
             </div>
 
             <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-
                 <div className="flex flex-col gap-4 border-b border-slate-200 p-5 md:flex-row md:items-center">
                     <div className="relative flex-1">
                         <Search
@@ -208,6 +250,7 @@ function ClientesPage() {
                 <TablaClientes
                     clientes={clientes}
                     cargando={cargando}
+                    puedeEditar={puedeEditar}
                     onVer={(id) => navigate(`/clientes/${id}`)}
                     onEditar={(id) => navigate(`/clientes/${id}/editar`)}
                 />

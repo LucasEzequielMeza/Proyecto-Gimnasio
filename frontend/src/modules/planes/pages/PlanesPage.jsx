@@ -16,7 +16,13 @@ import { useAuth } from '../../../context/AuthContext';
 function PlanesPage() {
     const navegar = useNavigate();
     const location = useLocation();
-    const { csrfToken } = useAuth();
+    const { csrfToken, usuario } = useAuth();
+
+    const permisos = usuario?.permisos ?? [];
+
+    const puedeCrear = permisos.includes('planes.crear');
+    const puedeEditar = permisos.includes('planes.editar');
+    const puedeDesactivar = permisos.includes('planes.desactivar');
 
     const [planes, setPlanes] = useState([]);
     const [cargando, setCargando] = useState(true);
@@ -102,6 +108,8 @@ function PlanesPage() {
     }
 
     function abrirConfirmacion(plan) {
+        if (!puedeDesactivar) return;
+
         setError('');
         setPlanSeleccionado(plan);
     }
@@ -113,7 +121,7 @@ function PlanesPage() {
     }
 
     async function confirmarCambioEstado() {
-        if (!planSeleccionado || cambiandoEstado) return;
+        if (!planSeleccionado || !puedeDesactivar || cambiandoEstado) return;
 
         const nuevoEstado =
             planSeleccionado.estado === 'activo' ? 'inactivo' : 'activo';
@@ -158,18 +166,20 @@ function PlanesPage() {
                             Planes
                         </h1>
                         <p className="mt-1 text-sm text-slate-500">
-                            Administrá los planes y sus condiciones.
+                            Consultá los planes y sus condiciones.
                         </p>
                     </div>
 
-                    <button
-                        type="button"
-                        onClick={() => navegar('/planes/nuevo')}
-                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
-                    >
-                        <Plus size={18} />
-                        Nuevo plan
-                    </button>
+                    {puedeCrear && (
+                        <button
+                            type="button"
+                            onClick={() => navegar('/planes/nuevo')}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+                        >
+                            <Plus size={18} />
+                            Nuevo plan
+                        </button>
+                    )}
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -206,9 +216,7 @@ function PlanesPage() {
                             <input
                                 type="text"
                                 value={busqueda}
-                                onChange={(evento) =>
-                                    setBusqueda(evento.target.value)
-                                }
+                                onChange={(evento) => setBusqueda(evento.target.value)}
                                 placeholder="Buscar por nombre o descripción..."
                                 className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                             />
@@ -319,7 +327,8 @@ function PlanesPage() {
                                 No se encontraron planes
                             </p>
                             <p className="mt-1 text-sm text-slate-500">
-                                Probá modificando los filtros o creando un nuevo plan.
+                                Probá modificando los filtros
+                                {puedeCrear ? ' o creando un nuevo plan.' : '.'}
                             </p>
                         </div>
                     ) : (
@@ -332,16 +341,15 @@ function PlanesPage() {
                                         <th className="px-5 py-4">Duración</th>
                                         <th className="px-5 py-4">Precio</th>
                                         <th className="px-5 py-4">Estado</th>
-                                        <th className="px-5 py-4 text-right">Acciones</th>
+                                        {(puedeEditar || puedeDesactivar) && (
+                                            <th className="px-5 py-4 text-right">Acciones</th>
+                                        )}
                                     </tr>
                                 </thead>
 
                                 <tbody className="divide-y divide-slate-100">
                                     {planes.map((plan) => (
-                                        <tr
-                                            key={plan.id}
-                                            className="transition hover:bg-slate-50"
-                                        >
+                                        <tr key={plan.id} className="transition hover:bg-slate-50">
                                             <td className="px-5 py-4">
                                                 <p className="font-medium text-slate-800">
                                                     {plan.nombre}
@@ -362,7 +370,7 @@ function PlanesPage() {
                                             </td>
 
                                             <td className="whitespace-nowrap px-5 py-4 font-medium text-slate-800">
-                                                {formatearPrecio(plan.precio, 'ARS')}
+                                                {formatearPrecio(plan.precio)}
                                             </td>
 
                                             <td className="px-5 py-4">
@@ -377,43 +385,39 @@ function PlanesPage() {
                                                 </span>
                                             </td>
 
-                                            <td className="px-5 py-4">
-                                                <div className="flex justify-end gap-2">
-                                                    <button
-                                                        type="button"
-                                                        title="Editar plan"
-                                                        aria-label={`Editar ${plan.nombre}`}
-                                                        onClick={() =>
-                                                            navegar(`/planes/${plan.id}/editar`)
-                                                        }
-                                                        className="rounded-lg p-2 text-blue-600 transition hover:bg-blue-50"
-                                                    >
-                                                        <Pencil size={18} />
-                                                    </button>
+                                            {(puedeEditar || puedeDesactivar) && (
+                                                <td className="px-5 py-4">
+                                                    <div className="flex justify-end gap-2">
+                                                        {puedeEditar && (
+                                                            <button
+                                                                type="button"
+                                                                title="Editar plan"
+                                                                aria-label={`Editar ${plan.nombre}`}
+                                                                onClick={() => navegar(`/planes/${plan.id}/editar`)}
+                                                                className="rounded-lg p-2 text-blue-600 transition hover:bg-blue-50"
+                                                            >
+                                                                <Pencil size={18} />
+                                                            </button>
+                                                        )}
 
-                                                    <button
-                                                        type="button"
-                                                        title={
-                                                            plan.estado === 'activo'
-                                                                ? 'Desactivar plan'
-                                                                : 'Activar plan'
-                                                        }
-                                                        aria-label={
-                                                            plan.estado === 'activo'
-                                                                ? `Desactivar ${plan.nombre}`
-                                                                : `Activar ${plan.nombre}`
-                                                        }
-                                                        onClick={() => abrirConfirmacion(plan)}
-                                                        className={`rounded-lg p-2 transition ${
-                                                            plan.estado === 'activo'
-                                                                ? 'text-red-600 hover:bg-red-50'
-                                                                : 'text-green-600 hover:bg-green-50'
-                                                        }`}
-                                                    >
-                                                        <Power size={18} />
-                                                    </button>
-                                                </div>
-                                            </td>
+                                                        {puedeDesactivar && (
+                                                            <button
+                                                                type="button"
+                                                                title={plan.estado === 'activo' ? 'Desactivar plan' : 'Activar plan'}
+                                                                aria-label={`${plan.estado === 'activo' ? 'Desactivar' : 'Activar'} ${plan.nombre}`}
+                                                                onClick={() => abrirConfirmacion(plan)}
+                                                                className={`rounded-lg p-2 transition ${
+                                                                    plan.estado === 'activo'
+                                                                        ? 'text-red-600 hover:bg-red-50'
+                                                                        : 'text-green-600 hover:bg-green-50'
+                                                                }`}
+                                                            >
+                                                                <Power size={18} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            )}
                                         </tr>
                                     ))}
                                 </tbody>
@@ -451,7 +455,7 @@ function PlanesPage() {
                 </section>
             </div>
 
-            {planSeleccionado && (
+            {planSeleccionado && puedeDesactivar && (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm"
                     onMouseDown={(evento) => {
@@ -469,23 +473,16 @@ function PlanesPage() {
                     >
                         <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
                             <div className="flex items-start gap-3">
-                                <div
-                                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-                                        accionActivacion
-                                            ? 'bg-green-50 text-green-600'
-                                            : 'bg-amber-50 text-amber-600'
-                                    }`}
-                                >
-                                    {accionActivacion
-                                        ? <Power size={21} />
-                                        : <AlertTriangle size={21} />}
+                                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+                                    accionActivacion
+                                        ? 'bg-green-50 text-green-600'
+                                        : 'bg-amber-50 text-amber-600'
+                                }`}>
+                                    {accionActivacion ? <Power size={21} /> : <AlertTriangle size={21} />}
                                 </div>
 
                                 <div>
-                                    <h2
-                                        id="confirmacion-titulo"
-                                        className="text-lg font-semibold text-slate-900"
-                                    >
+                                    <h2 id="confirmacion-titulo" className="text-lg font-semibold text-slate-900">
                                         {accionActivacion ? 'Activar plan' : 'Desactivar plan'}
                                     </h2>
                                     <p className="mt-1 text-sm text-slate-500">
@@ -506,10 +503,7 @@ function PlanesPage() {
                         </div>
 
                         <div className="px-6 py-5">
-                            <p
-                                id="confirmacion-descripcion"
-                                className="text-sm leading-6 text-slate-600"
-                            >
+                            <p id="confirmacion-descripcion" className="text-sm leading-6 text-slate-600">
                                 ¿Estás seguro de que querés {accion} el plan{' '}
                                 <span className="font-semibold text-slate-900">
                                     {planSeleccionado.nombre}
@@ -517,14 +511,11 @@ function PlanesPage() {
                                 ?
                             </p>
 
-                            {!accionActivacion && (
+                            {!accionActivacion ? (
                                 <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                                    Al desactivar este plan, dejará de estar disponible
-                                    para nuevas contrataciones. No se elimina su información.
+                                    Al desactivar este plan, dejará de estar disponible para nuevas contrataciones. No se elimina su información.
                                 </div>
-                            )}
-
-                            {accionActivacion && (
+                            ) : (
                                 <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
                                     El plan volverá a estar disponible para nuevas contrataciones.
                                 </div>

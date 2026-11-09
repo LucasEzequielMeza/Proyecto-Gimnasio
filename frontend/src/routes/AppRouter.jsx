@@ -2,17 +2,23 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 
 import LoginPage from '../modules/auth/pages/LoginPage';
 import DashboardPage from '../modules/dashboard/pages/Dashboard';
+
 import ClientesPage from '../modules/clientes/pages/ClientesPage';
 import ClienteNuevoPage from '../modules/clientes/pages/ClienteNuevoPage';
 import ClienteEditarPage from '../modules/clientes/pages/ClienteEditarPage';
 import ClienteDetallePage from '../modules/clientes/pages/ClienteDetallePage';
+
 import PlanesPage from '../modules/planes/pages/PlanesPage';
 import PlanNuevoPage from '../modules/planes/pages/PlanNuevoPage';
 import PlanEditarPage from '../modules/planes/pages/PlanEditarPage';
+
 import MembresiasPage from '../modules/membresias/pages/MembresiasPage';
 import MembresiaNuevaPage from '../modules/membresias/pages/MembresiaNuevaPage';
 import MembresiaEditarPage from '../modules/membresias/pages/MembresiaEditarPage';
 import MembresiaDetallePage from '../modules/membresias/pages/MembresiaDetallePage';
+
+import PagosPage from '../modules/pagos/pages/PagosPage';
+import ObligacionDetallePage from '../modules/pagos/pages/ObligacionDetallePage';
 
 import MainLayout from '../layouts/MainLayout';
 import RutaProtegida from './RutaProtegida';
@@ -39,6 +45,9 @@ function AppRouter() {
                     <Route path="/membresias/nueva" element={<MembresiaNuevaPage />} />
                     <Route path="/membresias/:id/editar" element={<MembresiaEditarPage />} />
                     <Route path="/membresias/:id" element={<MembresiaDetallePage />} />
+
+                    <Route path="/pagos" element={<PagosPage />} />
+                    <Route path="/pagos/obligaciones/:id" element={<ObligacionDetallePage />}/>
                 </Route>
             </Route>
 

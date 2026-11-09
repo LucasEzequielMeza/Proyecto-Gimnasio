@@ -8,6 +8,7 @@ import {
 function TablaClientes({
     clientes,
     cargando,
+    puedeEditar = false,
     onVer,
     onEditar
 }) {
@@ -118,19 +119,23 @@ function TablaClientes({
                                         type="button"
                                         onClick={() => onVer(cliente.id)}
                                         title="Ver cliente"
+                                        aria-label="Ver cliente"
                                         className="rounded-lg p-2 text-slate-500 transition hover:bg-blue-50 hover:text-blue-600"
                                     >
                                         <Eye size={18} />
                                     </button>
 
-                                    <button
-                                        type="button"
-                                        onClick={() => onEditar(cliente.id)}
-                                        title="Editar cliente"
-                                        className="rounded-lg p-2 text-slate-500 transition hover:bg-amber-50 hover:text-amber-600"
-                                    >
-                                        <Pencil size={18} />
-                                    </button>
+                                    {puedeEditar && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onEditar(cliente.id)}
+                                            title="Editar cliente"
+                                            aria-label="Editar cliente"
+                                            className="rounded-lg p-2 text-slate-500 transition hover:bg-amber-50 hover:text-amber-600"
+                                        >
+                                            <Pencil size={18} />
+                                        </button>
+                                    )}
                                 </div>
                             </td>
                         </tr>

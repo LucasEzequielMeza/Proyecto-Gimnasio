@@ -9,7 +9,10 @@ import { useAuth } from '../../../context/AuthContext';
 function MembresiaEditarPage() {
     const { id } = useParams();
     const navegar = useNavigate();
-    const { csrfToken } = useAuth();
+    const { csrfToken, usuario } = useAuth();
+
+    const permisos = usuario?.permisos ?? [];
+    const puedeEditar = permisos.includes('membresias.editar');
 
     const [membresia, setMembresia] = useState(null);
     const [cargando, setCargando] = useState(true);
@@ -17,69 +20,160 @@ function MembresiaEditarPage() {
     const [error, setError] = useState('');
 
     useEffect(() => {
-        async function obtenerMembresia() {
+        if (!puedeEditar) {
+            setCargando(false);
+            return;
+        }
+
+        let activo = true;
+
+        async function cargarMembresia() {
             try {
                 setCargando(true);
                 setError('');
 
                 const respuesta = await membresiasServicio.obtener(id);
 
-                if (respuesta.data.estado !== 'ACTIVA') {
+                if (!activo) return;
+
+                if (!respuesta.data || respuesta.data.estado !== 'ACTIVA') {
                     navegar(`/membresias/${id}`, { replace: true });
                     return;
                 }
 
                 setMembresia(respuesta.data);
             } catch (error) {
-                setError(error.response?.data?.message || 'No se pudo obtener la membresía.');
+                if (!activo) return;
+
+                setError(
+                    error.response?.data?.mensaje ||
+                    error.response?.data?.message ||
+                    'No se pudo cargar la membresía.'
+                );
             } finally {
-                setCargando(false);
+                if (activo) {
+                    setCargando(false);
+                }
             }
         }
 
-        obtenerMembresia();
-    }, [id, navegar]);
+        cargarMembresia();
+
+        return () => {
+            activo = false;
+        };
+    }, [id, puedeEditar, navegar]);
 
     async function manejarEnvio(datos) {
+        if (!puedeEditar || guardando) return;
+
         try {
             setGuardando(true);
-            await membresiasServicio.editar(id, datos, csrfToken);
+            setError('');
+
+            await membresiasServicio.editar(
+                id,
+                { fecha_inicio: datos.fecha_inicio },
+                csrfToken
+            );
+
             navegar(`/membresias/${id}`, {
-                state: { mensaje: 'La membresía se actualizó correctamente.' }
+                replace: true,
+                state: {
+                    mensaje: 'La membresía se actualizó correctamente.'
+                }
             });
+        } catch (error) {
+            setError(
+                error.response?.data?.mensaje ||
+                error.response?.data?.message ||
+                'No se pudieron guardar los cambios de la membresía.'
+            );
         } finally {
             setGuardando(false);
         }
     }
 
-    if (cargando) {
-        return <div className="rounded-xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-500">Cargando membresía...</div>;
-    }
-
-    if (error || !membresia) {
+    if (!puedeEditar) {
         return (
-            <div className="space-y-4">
-                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {error || 'No se encontró la membresía.'}
-                </div>
-                <button type="button" onClick={() => navegar('/membresias')} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
+                <p className="font-medium text-slate-800">
+                    No tenés permiso para editar membresías.
+                </p>
+
+                <button
+                    type="button"
+                    onClick={() => navegar('/membresias')}
+                    className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
                     Volver a membresías
                 </button>
             </div>
         );
     }
 
+    if (cargando) {
+        return (
+            <div className="py-12 text-center text-sm text-slate-500">
+                Cargando información de la membresía...
+            </div>
+        );
+    }
+
+    if (error && !membresia) {
+        return (
+            <div className="space-y-4">
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {error}
+                </div>
+
+                <button
+                    type="button"
+                    onClick={() => navegar('/membresias')}
+                    className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                    <ArrowLeft size={17} />
+                    Volver a membresías
+                </button>
+            </div>
+        );
+    }
+
+    if (!membresia) {
+        return null;
+    }
+
     return (
-        <div className="space-y-6">
+        <div className="mx-auto max-w-5xl space-y-6">
             <div className="flex items-center gap-3">
-                <button type="button" onClick={() => navegar(`/membresias/${id}`)} className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-100" aria-label="Volver">
+                <button
+                    type="button"
+                    onClick={() => navegar(`/membresias/${id}`)}
+                    className="rounded-lg border border-slate-200 p-2 text-slate-600 transition hover:bg-slate-100"
+                    aria-label="Volver al detalle"
+                >
                     <ArrowLeft size={20} />
                 </button>
+
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-800">Editar membresía</h1>
-                    <p className="mt-1 text-sm text-slate-500">Modificá la fecha de inicio de la membresía.</p>
+                    <h1 className="text-2xl font-bold text-slate-800">
+                        Editar membresía
+                    </h1>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                        Modificá la fecha de inicio de la membresía.
+                    </p>
                 </div>
             </div>
+
+            {error && (
+                <div
+                    role="alert"
+                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+                >
+                    {error}
+                </div>
+            )}
 
             <MembresiaForm
                 valoresIniciales={membresia}

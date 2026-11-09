@@ -12,6 +12,8 @@ import {
     X
 } from 'lucide-react';
 
+import { useAuth } from '../context/AuthContext';
+
 const opcionesMenu = [
     {
         nombre: 'Dashboard',
@@ -21,51 +23,71 @@ const opcionesMenu = [
     {
         nombre: 'Usuarios',
         ruta: '/usuarios',
-        icono: Users
+        icono: Users,
+        permiso: 'usuarios.consultar'
     },
     {
         nombre: 'Clientes',
         ruta: '/clientes',
-        icono: UserRound
+        icono: UserRound,
+        permiso: 'clientes.consultar'
     },
     {
         nombre: 'Planes',
         ruta: '/planes',
-        icono: ClipboardList
+        icono: ClipboardList,
+        permiso: 'planes.consultar'
     },
     {
         nombre: 'Membresías',
         ruta: '/membresias',
-        icono: ClipboardList
+        icono: ClipboardList,
+        permiso: 'membresias.consultar'
     },
     {
         nombre: 'Pagos',
         ruta: '/pagos',
-        icono: CreditCard
+        icono: CreditCard,
+        permiso: 'pagos.consultar'
     },
     {
         nombre: 'Asistencias',
         ruta: '/asistencias',
-        icono: CalendarCheck
+        icono: CalendarCheck,
+        permiso: 'asistencias.consultar'
     },
     {
         nombre: 'Rutinas',
         ruta: '/rutinas',
-        icono: Dumbbell
+        icono: Dumbbell,
+        permiso: 'rutinas.consultar'
     },
     {
         nombre: 'Notificaciones',
         ruta: '/notificaciones',
-        icono: Bell
+        icono: Bell,
+        permiso: 'notificaciones.consultar'
     },
     {
         nombre: 'Clases y reservas',
         ruta: '/clases',
-        icono: CalendarDays
+        icono: CalendarDays,
+        permiso: 'clases.consultar'
     }
 ];
 
 function Sidebar({ abierto, onCerrar }) {
+    const { usuario } = useAuth();
+
+    const permisos = usuario?.permisos ?? [];
+
+    /* Muestro únicamente las opciones para las que el usuario tiene permiso de consulta. */
+    const opcionesVisibles = opcionesMenu.filter((opcion) => {
+        if (!opcion.permiso) return true;
+
+        return permisos.includes(opcion.permiso);
+    });
+
     return (
         <>
             {abierto && (
@@ -95,6 +117,7 @@ function Sidebar({ abierto, onCerrar }) {
                             <h1 className="text-lg font-bold tracking-wide">
                                 ProyectoGym
                             </h1>
+
                             <p className="text-xs text-slate-400">
                                 Gestión integral
                             </p>
@@ -116,7 +139,7 @@ function Sidebar({ abierto, onCerrar }) {
                         Menú principal
                     </p>
 
-                    {opcionesMenu.map((opcion) => {
+                    {opcionesVisibles.map((opcion) => {
                         const Icono = opcion.icono;
 
                         return (
@@ -146,6 +169,7 @@ function Sidebar({ abierto, onCerrar }) {
                     <p className="text-xs text-slate-500">
                         ProyectoGym
                     </p>
+
                     <p className="mt-1 text-xs text-slate-400">
                         Sistema de gestión
                     </p>

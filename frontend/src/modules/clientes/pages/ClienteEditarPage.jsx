@@ -34,7 +34,9 @@ const fechaMaximaNacimiento = obtenerFechaMaxima();
 function ClienteEditarPage() {
     const { id } = useParams();
     const navegar = useNavigate();
-    const { csrfToken } = useAuth();
+    const { csrfToken, usuario } = useAuth();
+
+    const puedeEditar = usuario?.permisos?.includes('clientes.editar') ?? false;
 
     const [formulario, setFormulario] = useState(formularioInicial);
     const [erroresCampos, setErroresCampos] = useState({});
@@ -43,6 +45,11 @@ function ClienteEditarPage() {
     const [errorGeneral, setErrorGeneral] = useState('');
 
     const cargarCliente = useCallback(async () => {
+        if (!puedeEditar) {
+            setCargando(false);
+            return;
+        }
+
         try {
             setCargando(true);
             setErrorGeneral('');
@@ -69,12 +76,13 @@ function ClienteEditarPage() {
         } catch (error) {
             setErrorGeneral(
                 error.response?.data?.message ||
+                error.response?.data?.mensaje ||
                 'No se pudo cargar la información del cliente.'
             );
         } finally {
             setCargando(false);
         }
-    }, [id]);
+    }, [id, puedeEditar]);
 
     useEffect(() => {
         cargarCliente();
@@ -108,6 +116,8 @@ function ClienteEditarPage() {
 
     async function manejarEnvio(evento) {
         evento.preventDefault();
+
+        if (!puedeEditar || guardando) return;
 
         setErroresCampos({});
         setErrorGeneral('');
@@ -155,6 +165,7 @@ function ClienteEditarPage() {
             } else {
                 setErrorGeneral(
                     respuesta?.message ||
+                    respuesta?.mensaje ||
                     'No se pudieron guardar los cambios. Intentá nuevamente.'
                 );
             }
@@ -216,6 +227,24 @@ function ClienteEditarPage() {
         );
     }
 
+    if (!puedeEditar) {
+        return (
+            <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
+                <p className="font-medium text-slate-800">
+                    No tenés permiso para editar clientes.
+                </p>
+
+                <button
+                    type="button"
+                    onClick={() => navegar('/clientes')}
+                    className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                    Volver a clientes
+                </button>
+            </div>
+        );
+    }
+
     if (cargando) {
         return (
             <div className="py-12 text-center text-sm text-slate-500">
@@ -240,6 +269,7 @@ function ClienteEditarPage() {
                     <h1 className="text-2xl font-bold text-slate-800">
                         Editar cliente
                     </h1>
+
                     <p className="mt-1 text-sm text-slate-500">
                         Modificá la información del cliente.
                     </p>
@@ -291,14 +321,8 @@ function ClienteEditarPage() {
                     </h2>
 
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                        {campo(
-                            'Nombre del contacto',
-                            'contacto_emergencia_nombre'
-                        )}
-                        {campo(
-                            'Teléfono del contacto',
-                            'contacto_emergencia_telefono'
-                        )}
+                        {campo('Nombre del contacto', 'contacto_emergencia_nombre')}
+                        {campo('Teléfono del contacto', 'contacto_emergencia_telefono')}
                     </div>
                 </section>
 

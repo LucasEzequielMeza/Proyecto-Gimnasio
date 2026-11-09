@@ -33,7 +33,9 @@ const fechaMaximaNacimiento = obtenerFechaMaxima();
 
 function ClienteNuevoPage() {
     const navegar = useNavigate();
-    const { csrfToken } = useAuth();
+    const { csrfToken, usuario } = useAuth();
+
+    const puedeCrear = usuario?.permisos?.includes('clientes.crear') ?? false;
 
     const [formulario, setFormulario] = useState(formularioInicial);
     const [erroresCampos, setErroresCampos] = useState({});
@@ -68,6 +70,8 @@ function ClienteNuevoPage() {
 
     async function manejarEnvio(evento) {
         evento.preventDefault();
+
+        if (!puedeCrear || guardando) return;
 
         setErroresCampos({});
         setErrorGeneral('');
@@ -176,6 +180,24 @@ function ClienteNuevoPage() {
         );
     }
 
+    if (!puedeCrear) {
+        return (
+            <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
+                <p className="font-medium text-slate-800">
+                    No tenés permiso para crear clientes.
+                </p>
+
+                <button
+                    type="button"
+                    onClick={() => navegar('/clientes')}
+                    className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                    Volver a clientes
+                </button>
+            </div>
+        );
+    }
+
     return (
         <div className="mx-auto max-w-5xl space-y-6">
             <div className="flex items-center gap-3">
@@ -237,14 +259,8 @@ function ClienteNuevoPage() {
                     </h2>
 
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                        {campo(
-                            'Nombre del contacto',
-                            'contacto_emergencia_nombre'
-                        )}
-                        {campo(
-                            'Teléfono del contacto',
-                            'contacto_emergencia_telefono'
-                        )}
+                        {campo('Nombre del contacto', 'contacto_emergencia_nombre')}
+                        {campo('Teléfono del contacto', 'contacto_emergencia_telefono')}
                     </div>
                 </section>
 

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 
 import clientesServicio from '../services/clientesServicio';
+import { useAuth } from '../../../context/AuthContext';
 
 function formatearFecha(fecha) {
     if (!fecha) return 'No especificada';
@@ -81,12 +82,23 @@ function SeccionDetalle({ titulo, children }) {
 function ClienteDetallePage() {
     const { id } = useParams();
     const navegar = useNavigate();
+    const { usuario } = useAuth();
+
+    const permisos = usuario?.permisos ?? [];
+
+    const puedeConsultar = permisos.includes('clientes.consultar');
+    const puedeEditar = permisos.includes('clientes.editar');
 
     const [cliente, setCliente] = useState(null);
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState('');
 
     const cargarCliente = useCallback(async () => {
+        if (!puedeConsultar) {
+            setCargando(false);
+            return;
+        }
+
         try {
             setCargando(true);
             setError('');
@@ -96,16 +108,35 @@ function ClienteDetallePage() {
         } catch (error) {
             setError(
                 error.response?.data?.message ||
+                error.response?.data?.mensaje ||
                 'No se pudo cargar la información del cliente.'
             );
         } finally {
             setCargando(false);
         }
-    }, [id]);
+    }, [id, puedeConsultar]);
 
     useEffect(() => {
         cargarCliente();
     }, [cargarCliente]);
+
+    if (!puedeConsultar) {
+        return (
+            <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
+                <p className="font-medium text-slate-800">
+                    No tenés permiso para consultar clientes.
+                </p>
+
+                <button
+                    type="button"
+                    onClick={() => navegar('/')}
+                    className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                    Volver al inicio
+                </button>
+            </div>
+        );
+    }
 
     if (cargando) {
         return (
@@ -157,7 +188,6 @@ function ClienteDetallePage() {
 
     return (
         <div className="mx-auto max-w-5xl space-y-6">
-
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
                 <div className="flex items-center gap-3">
                     <button
@@ -180,14 +210,16 @@ function ClienteDetallePage() {
                     </div>
                 </div>
 
-                <button
-                    type="button"
-                    onClick={() => navegar(`/clientes/${id}/editar`)}
-                    className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
-                >
-                    <Pencil size={17} />
-                    Editar cliente
-                </button>
+                {puedeEditar && (
+                    <button
+                        type="button"
+                        onClick={() => navegar(`/clientes/${id}/editar`)}
+                        className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+                    >
+                        <Pencil size={17} />
+                        Editar cliente
+                    </button>
+                )}
             </div>
 
             <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -228,23 +260,9 @@ function ClienteDetallePage() {
 
             <SeccionDetalle titulo="Información personal">
                 <div className="grid gap-6 sm:grid-cols-2">
-                    <CampoDetalle
-                        etiqueta="Nombre"
-                        valor={cliente.nombre}
-                        icono={UserRound}
-                    />
-
-                    <CampoDetalle
-                        etiqueta="Apellido"
-                        valor={cliente.apellido}
-                        icono={UserRound}
-                    />
-
-                    <CampoDetalle
-                        etiqueta="Documento"
-                        valor={cliente.documento}
-                        icono={FileText}
-                    />
+                    <CampoDetalle etiqueta="Nombre" valor={cliente.nombre} icono={UserRound} />
+                    <CampoDetalle etiqueta="Apellido" valor={cliente.apellido} icono={UserRound} />
+                    <CampoDetalle etiqueta="Documento" valor={cliente.documento} icono={FileText} />
 
                     <CampoDetalle
                         etiqueta="Fecha de nacimiento"
@@ -260,24 +278,11 @@ function ClienteDetallePage() {
 
             <SeccionDetalle titulo="Información de contacto">
                 <div className="grid gap-6 sm:grid-cols-2">
-                    <CampoDetalle
-                        etiqueta="Correo electrónico"
-                        valor={cliente.email}
-                        icono={Mail}
-                    />
-
-                    <CampoDetalle
-                        etiqueta="Teléfono"
-                        valor={cliente.telefono}
-                        icono={Phone}
-                    />
+                    <CampoDetalle etiqueta="Correo electrónico" valor={cliente.email} icono={Mail} />
+                    <CampoDetalle etiqueta="Teléfono" valor={cliente.telefono} icono={Phone} />
 
                     <div className="sm:col-span-2">
-                        <CampoDetalle
-                            etiqueta="Dirección"
-                            valor={cliente.direccion}
-                            icono={MapPin}
-                        />
+                        <CampoDetalle etiqueta="Dirección" valor={cliente.direccion} icono={MapPin} />
                     </div>
                 </div>
             </SeccionDetalle>

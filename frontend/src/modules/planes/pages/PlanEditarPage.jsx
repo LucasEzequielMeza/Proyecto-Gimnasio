@@ -9,7 +9,10 @@ import { useAuth } from '../../../context/AuthContext';
 function PlanEditarPage() {
     const { id } = useParams();
     const navegar = useNavigate();
-    const { csrfToken } = useAuth();
+    const { csrfToken, usuario } = useAuth();
+
+    const puedeConsultar = usuario?.permisos?.includes('planes.consultar') ?? false;
+    const puedeEditar = usuario?.permisos?.includes('planes.editar') ?? false;
 
     const [plan, setPlan] = useState(null);
     const [cargando, setCargando] = useState(true);
@@ -35,12 +38,17 @@ function PlanEditarPage() {
     }, [id]);
 
     useEffect(() => {
-        cargarPlan();
-    }, [cargarPlan]);
+        if (puedeConsultar && puedeEditar) {
+            cargarPlan();
+        }
+    }, [cargarPlan, puedeConsultar, puedeEditar]);
 
     async function manejarEnvio(datos) {
+        if (!puedeEditar || guardando) return;
+
         try {
             setGuardando(true);
+            setErrorGeneral('');
 
             await planesServicio.editar(id, datos, csrfToken);
 
@@ -50,9 +58,24 @@ function PlanEditarPage() {
                     mensaje: 'Plan actualizado correctamente'
                 }
             });
+        } catch (error) {
+            setErrorGeneral(
+                error.response?.data?.message ||
+                'No se pudo actualizar el plan.'
+            );
         } finally {
             setGuardando(false);
         }
+    }
+
+    if (!puedeConsultar) {
+        navegar('/', { replace: true });
+        return null;
+    }
+
+    if (!puedeEditar) {
+        navegar('/planes', { replace: true });
+        return null;
     }
 
     if (cargando) {
