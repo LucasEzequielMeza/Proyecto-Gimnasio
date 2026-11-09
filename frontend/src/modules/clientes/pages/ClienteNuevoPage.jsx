@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, Save, Eye, EyeOff } from 'lucide-react';
 
 import clientesServicio from '../services/clientesServicio';
 import { useAuth } from '../../../context/AuthContext';
@@ -15,7 +15,9 @@ const formularioInicial = {
     direccion: '',
     contacto_emergencia_nombre: '',
     contacto_emergencia_telefono: '',
-    observaciones: ''
+    observaciones: '',
+    crearCuenta: false,
+    password: ''
 };
 
 function obtenerFechaMaxima() {
@@ -41,9 +43,10 @@ function ClienteNuevoPage() {
     const [erroresCampos, setErroresCampos] = useState({});
     const [guardando, setGuardando] = useState(false);
     const [errorGeneral, setErrorGeneral] = useState('');
+    const [mostrarPassword, setMostrarPassword] = useState(false);
 
     function manejarCambio(evento) {
-        const { name, value } = evento.target;
+        const { name, value, type, checked } = evento.target;
 
         const camposNumericos = [
             'documento',
@@ -51,9 +54,11 @@ function ClienteNuevoPage() {
             'contacto_emergencia_telefono'
         ];
 
-        const valorFinal = camposNumericos.includes(name)
-            ? value.replace(/\D/g, '')
-            : value;
+        const valorFinal = type === 'checkbox'
+            ? checked
+            : camposNumericos.includes(name)
+                ? value.replace(/\D/g, '')
+                : value;
 
         setFormulario((actual) => ({
             ...actual,
@@ -98,14 +103,43 @@ function ClienteNuevoPage() {
             return;
         }
 
+        if (formulario.crearCuenta) {
+            if (!formulario.email.trim()) {
+                setErroresCampos({
+                    email: ['El email es obligatorio para crear una cuenta']
+                });
+                return;
+            }
+
+            if (formulario.password.length < 12) {
+                setErroresCampos({
+                    password: ['La contraseña debe tener al menos 12 caracteres']
+                });
+                return;
+            }
+
+            if (new TextEncoder().encode(formulario.password).length > 72) {
+                setErroresCampos({
+                    password: ['La contraseña no puede superar los 72 bytes']
+                });
+                return;
+            }
+        }
+
         try {
             setGuardando(true);
 
             const datos = Object.fromEntries(
-                Object.entries(formulario).map(([clave, valor]) => [
-                    clave,
-                    valor.trim() || null
-                ])
+                Object.entries(formulario)
+                    .filter(([clave]) => (
+                        clave !== 'password' || formulario.crearCuenta
+                    ))
+                    .map(([clave, valor]) => [
+                        clave,
+                        typeof valor === 'string'
+                            ? valor.trim() || null
+                            : valor
+                    ])
             );
 
             const respuesta = await clientesServicio.crear(datos, csrfToken);
@@ -254,6 +288,93 @@ function ClienteNuevoPage() {
                 </section>
 
                 <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h2 className="mb-4 text-lg font-semibold text-slate-800">
+                        Acceso al portal del cliente
+                    </h2>
+
+                    <label className="flex cursor-pointer items-start gap-3">
+                        <input
+                            type="checkbox"
+                            name="crearCuenta"
+                            checked={formulario.crearCuenta}
+                            onChange={manejarCambio}
+                            className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+
+                        <span>
+                            <span className="block text-sm font-medium text-slate-800">
+                                Crear cuenta para el portal del cliente
+                            </span>
+
+                            <span className="mt-1 block text-sm text-slate-500">
+                                El cliente podrá iniciar sesión y consultar su información personal.
+                            </span>
+                        </span>
+                    </label>
+
+                    {formulario.crearCuenta && (
+                        <div className="mt-5 space-y-5 border-t border-slate-100 pt-5">
+                            <div className="rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                Se creará una cuenta vinculada a la ficha del cliente con el rol CLIENTE.
+                            </div>
+
+                            <div>
+                                <label
+                                    htmlFor="password"
+                                    className="mb-1.5 block text-sm font-medium text-slate-700"
+                                >
+                                    Contraseña inicial
+                                    <span className="ml-1 text-red-500">*</span>
+                                </label>
+
+                                <div className="relative">
+                                    <input
+                                        id="password"
+                                        name="password"
+                                        type={mostrarPassword ? 'text' : 'password'}
+                                        value={formulario.password}
+                                        onChange={manejarCambio}
+                                        autoComplete="new-password"
+                                        minLength={12}
+                                        maxLength={72}
+                                        required
+                                        className={`w-full rounded-lg border bg-white px-3 py-2.5 pr-11 text-sm outline-none transition focus:ring-2 ${
+                                            erroresCampos.password
+                                                ? 'border-red-400 focus:border-red-500 focus:ring-red-100'
+                                                : 'border-slate-300 focus:border-blue-500 focus:ring-blue-100'
+                                        }`}
+                                        placeholder="Mínimo 12 caracteres"
+                                    />
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setMostrarPassword((actual) => !actual)}
+                                        className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-700"
+                                        aria-label={mostrarPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                                    >
+                                        {mostrarPassword
+                                            ? <EyeOff size={18} />
+                                            : <Eye size={18} />}
+                                    </button>
+                                </div>
+
+                                {erroresCampos.password && (
+                                    <p className="mt-1 text-sm text-red-600">
+                                        {Array.isArray(erroresCampos.password)
+                                            ? erroresCampos.password[0]
+                                            : erroresCampos.password}
+                                    </p>
+                                )}
+
+                                <p className="mt-1 text-xs text-slate-500">
+                                    La contraseña se almacenará protegida mediante un hash en el servidor.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </section>
+
+                <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
                     <h2 className="mb-5 text-lg font-semibold text-slate-800">
                         Contacto de emergencia
                     </h2>
@@ -313,7 +434,9 @@ function ClienteNuevoPage() {
                         className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <Save size={17} />
-                        {guardando ? 'Guardando...' : 'Guardar cliente'}
+                        {guardando
+                            ? 'Guardando...'
+                            : 'Guardar cliente'}
                     </button>
                 </div>
             </form>

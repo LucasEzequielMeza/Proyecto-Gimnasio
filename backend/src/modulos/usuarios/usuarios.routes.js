@@ -4,6 +4,8 @@ import {
     crearUsuario,
     listarUsuarios,
     obtenerUsuario,
+    editarUsuario,
+    listarRoles,
     cambiarEstadoUsuario,
     cambiarRolesUsuario
 } from './usuarios.controller.js';
@@ -22,6 +24,24 @@ const router = Router();
 
 router.use(estaAutenticado);
 
+router.get(
+    '/',
+    requierePermiso('usuarios.consultar'),
+    listarUsuarios
+);
+
+router.get(
+    '/roles',
+    requierePermiso('roles.consultar'),
+    listarRoles
+);
+
+router.get(
+    '/:id',
+    requierePermiso('usuarios.consultar'),
+    obtenerUsuario
+);
+
 router.post(
     '/',
     verificarOrigen,
@@ -30,16 +50,12 @@ router.post(
     crearUsuario
 );
 
-router.get(
-    '/',
-    requierePermiso('usuarios.consultar'),
-    listarUsuarios
-);
-
-router.get(
+router.patch(
     '/:id',
-    requierePermiso('usuarios.consultar'),
-    obtenerUsuario
+    verificarOrigen,
+    verificarCsrf,
+    requierePermiso('usuarios.editar'),
+    editarUsuario
 );
 
 router.patch(

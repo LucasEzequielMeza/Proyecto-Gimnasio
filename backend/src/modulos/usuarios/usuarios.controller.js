@@ -6,155 +6,284 @@ import {
     listarUsuariosSchema,
     idUsuarioSchema,
     cambiarEstadoUsuarioSchema,
-    cambiarRolesUsuarioSchema
+    cambiarRolesUsuarioSchema,
+    editarUsuarioSchema
 } from './usuarios.schemas.js';
 
-const BLOQUEO_ADMINISTRADORES = [734921, 1];
+const ROLES_PERSONAL = ['ADMIN', 'RECEPCION', 'ENTRENADOR'];
 
-const responderErrorInterno = (res, mensaje, error) => {
-    console.error(mensaje, error.message);
+const camposUsuario = `
+    u.id,
+    u.nombre,
+    u.apellido,
+    u.email,
+    u.estado,
+    u.email_verificado,
+    u.created_at AS creado_at,
+    u.updated_at AS actualizado_at
+`;
 
-    return res.status(500).json({
+const responderValidacion = (res, error, mensaje) => {
+    const errores = {};
+
+    for (const issue of error.issues) {
+        const campo = issue.path.join('.') || 'general';
+
+        if (!errores[campo]) errores[campo] = [];
+
+        errores[campo].push(issue.message);
+    }
+
+    return res.status(400).json({
         success: false,
-        message: 'Error interno del servidor'
+        message: mensaje,
+        errors: errores
     });
 };
 
-const validarId = (req, res) => {
-    const resultado = idUsuarioSchema.safeParse(req.params);
-
-    if (!resultado.success) {
-        res.status(400).json({
+const responderError = (res, error) => {
+    if (error.code === '23505') {
+        return res.status(409).json({
             success: false,
-            message: 'El ID del usuario no es válido',
-            errores: resultado.error.issues.map((issue) => ({
-                campo: issue.path.join('.'),
-                mensaje: issue.message
-            }))
+            message: 'Ya existe un usuario registrado con ese email',
+            errors: {
+                email: ['El email ya está registrado']
+            }
         });
-
-        return null;
     }
 
-    return resultado.data.id;
-};
-
-const camposUsuario = `
-    id,
-    nombre,
-    apellido,
-    email,
-    estado,
-    email_verificado,
-    created_at AS creado_at,
-    updated_at AS actualizado_at
-`;
-
-const revertirTransaccion = async (conexion, transaccionIniciada) => {
-    if (!conexion || !transaccionIniciada) {
-        return;
+    if (error.code === '23503') {
+        return res.status(400).json({
+            success: false,
+            message: 'La relación solicitada no existe',
+            errors: {}
+        });
     }
 
-    try {
-        await conexion.query('ROLLBACK');
-    } catch (error) {
-        console.error('Error al revertir la transacción:', error.message);
-    }
+    console.error('Error en módulo usuarios:', error.message);
+
+    return res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor',
+        errors: {}
+    });
 };
 
 const bloquearCambiosAdministrativos = async (conexion) => {
     await conexion.query(
         'SELECT pg_advisory_xact_lock($1, $2)',
-        BLOQUEO_ADMINISTRADORES
+        [734921, 1]
     );
 };
 
 const contarAdministradoresActivos = async (conexion) => {
     const resultado = await conexion.query(
-        `SELECT COUNT(DISTINCT ur.usuario_id)::INTEGER AS total
-         FROM usuario_roles ur
+        `SELECT COUNT(DISTINCT u.id)::int AS total
+         FROM usuarios u
+         INNER JOIN usuario_roles ur ON ur.usuario_id = u.id
          INNER JOIN roles r ON r.id = ur.rol_id
-         INNER JOIN usuarios u ON u.id = ur.usuario_id
-         WHERE r.nombre = 'ADMIN'
-           AND u.estado = 'activo'`
+         WHERE u.estado = 'activo'
+         AND r.nombre = 'ADMIN'`
     );
 
     return resultado.rows[0].total;
 };
 
-export const crearUsuario = async (req, res) => {
-    const validacion = crearUsuarioSchema.safeParse(req.body);
+const esUsuarioPersonal = async (conexion, usuarioId) => {
+    const resultado = await conexion.query(
+        `SELECT EXISTS (
+            SELECT 1
+            FROM usuario_roles ur
+            INNER JOIN roles r ON r.id = ur.rol_id
+            WHERE ur.usuario_id = $1
+            AND r.nombre = ANY($2::varchar[])
+        ) AS permitido`,
+        [usuarioId, ROLES_PERSONAL]
+    );
 
-    if (!validacion.success) {
-        return res.status(400).json({
-            success: false,
-            message: 'Los datos enviados no son válidos',
-            errores: validacion.error.issues.map((issue) => ({
-                campo: issue.path.join('.'),
-                mensaje: issue.message
-            }))
+    return resultado.rows[0].permitido;
+};
+
+export const listarRoles = async (req, res) => {
+    try {
+        const resultado = await pool.query(
+            `SELECT id, nombre, descripcion
+             FROM roles
+             WHERE nombre = ANY($1::varchar[])
+             ORDER BY nombre`,
+            [ROLES_PERSONAL]
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: resultado.rows
         });
+    } catch (error) {
+        return responderError(res, error);
     }
+};
 
-    const {
-        nombre,
-        apellido,
-        email,
-        password,
-        roles
-    } = validacion.data;
+export const listarUsuarios = async (req, res) => {
+    try {
+        const filtros = listarUsuariosSchema.parse(req.query);
+        const { pagina, limite, buscar, estado } = filtros;
+        const offset = (pagina - 1) * limite;
 
-    let conexion;
-    let transaccionIniciada = false;
+        const condiciones = [
+            `EXISTS (
+                SELECT 1
+                FROM usuario_roles ur
+                INNER JOIN roles r ON r.id = ur.rol_id
+                WHERE ur.usuario_id = u.id
+                AND r.nombre = ANY($1::varchar[])
+            )`
+        ];
+
+        const valores = [ROLES_PERSONAL];
+
+        if (buscar) {
+            valores.push(`%${buscar}%`);
+            const posicion = valores.length;
+
+            condiciones.push(`(
+                u.nombre ILIKE $${posicion}
+                OR u.apellido ILIKE $${posicion}
+                OR u.email ILIKE $${posicion}
+            )`);
+        }
+
+        if (estado) {
+            valores.push(estado);
+            condiciones.push(`u.estado = $${valores.length}`);
+        }
+
+        const where = `WHERE ${condiciones.join(' AND ')}`;
+
+        const consultaTotal = await pool.query(
+            `SELECT COUNT(*)::int AS total
+             FROM usuarios u
+             ${where}`,
+            valores
+        );
+
+        const total = consultaTotal.rows[0].total;
+
+        const consulta = await pool.query(
+            `SELECT ${camposUsuario},
+                COALESCE(
+                    ARRAY_AGG(DISTINCT r.nombre)
+                    FILTER (WHERE r.nombre IS NOT NULL),
+                    ARRAY[]::varchar[]
+                ) AS roles
+             FROM usuarios u
+             INNER JOIN usuario_roles ur ON ur.usuario_id = u.id
+             INNER JOIN roles r ON r.id = ur.rol_id
+             ${where}
+             AND r.nombre = ANY($1::varchar[])
+             GROUP BY u.id
+             ORDER BY u.apellido, u.nombre
+             LIMIT $${valores.length + 1}
+             OFFSET $${valores.length + 2}`,
+            [...valores, limite, offset]
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: consulta.rows,
+            paginacion: {
+                pagina,
+                limite,
+                total,
+                totalPaginas: Math.ceil(total / limite)
+            }
+        });
+    } catch (error) {
+        if (error.name === 'ZodError') {
+            return responderValidacion(
+                res,
+                error,
+                'Los filtros enviados no son válidos'
+            );
+        }
+
+        return responderError(res, error);
+    }
+};
+
+export const obtenerUsuario = async (req, res) => {
+    try {
+        const { id } = idUsuarioSchema.parse(req.params);
+
+        const resultado = await pool.query(
+            `SELECT ${camposUsuario},
+                COALESCE(
+                    ARRAY_AGG(DISTINCT r.nombre)
+                    FILTER (WHERE r.nombre IS NOT NULL),
+                    ARRAY[]::varchar[]
+                ) AS roles,
+                COALESCE(
+                    ARRAY_AGG(DISTINCT p.codigo)
+                    FILTER (WHERE p.codigo IS NOT NULL),
+                    ARRAY[]::varchar[]
+                ) AS permisos
+             FROM usuarios u
+             INNER JOIN usuario_roles ur ON ur.usuario_id = u.id
+             INNER JOIN roles r ON r.id = ur.rol_id
+             LEFT JOIN rol_permisos rp ON rp.rol_id = r.id
+             LEFT JOIN permisos p ON p.id = rp.permiso_id
+             WHERE u.id = $1
+             AND r.nombre = ANY($2::varchar[])
+             GROUP BY u.id`,
+            [id, ROLES_PERSONAL]
+        );
+
+        if (resultado.rowCount === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Usuario no encontrado'
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: resultado.rows[0]
+        });
+    } catch (error) {
+        if (error.name === 'ZodError') {
+            return responderValidacion(res, error, 'El ID no es válido');
+        }
+
+        return responderError(res, error);
+    }
+};
+
+export const crearUsuario = async (req, res) => {
+    const conexion = await pool.connect();
 
     try {
-        conexion = await pool.connect();
+        const datos = crearUsuarioSchema.parse(req.body);
 
-        await conexion.query('BEGIN');
-        transaccionIniciada = true;
+        const {
+            nombre,
+            apellido,
+            email,
+            password,
+            roles
+        } = datos;
 
-        const existente = await conexion.query(
-            `SELECT id
-             FROM usuarios
-             WHERE LOWER(email) = $1
-             LIMIT 1`,
-            [email]
-        );
-
-        if (existente.rowCount > 0) {
-            await revertirTransaccion(conexion, transaccionIniciada);
-            transaccionIniciada = false;
-
-            return res.status(409).json({
-                success: false,
-                message: 'Ya existe una cuenta con ese correo electrónico'
-            });
-        }
-
-        const resultadoRoles = await conexion.query(
-            `SELECT id, nombre
-             FROM roles
-             WHERE nombre = ANY($1::VARCHAR[])
-             ORDER BY nombre`,
-            [roles]
-        );
-
-        if (resultadoRoles.rowCount !== roles.length) {
-            const rolesEncontrados = new Set(
-                resultadoRoles.rows.map((rol) => rol.nombre)
-            );
-
-            await revertirTransaccion(conexion, transaccionIniciada);
-            transaccionIniciada = false;
-
+        if (
+            !Array.isArray(roles) ||
+            roles.length === 0 ||
+            roles.some((rol) => !ROLES_PERSONAL.includes(rol))
+        ) {
             return res.status(400).json({
                 success: false,
-                message: 'Uno o más roles no existen',
-                rolesInvalidos: roles.filter(
-                    (rol) => !rolesEncontrados.has(rol)
-                )
+                message: 'Solo se pueden asignar roles del personal',
+                errors: {}
             });
         }
+
+        await conexion.query('BEGIN');
 
         const passwordHash = await bcrypt.hash(password, 12);
 
@@ -166,275 +295,149 @@ export const crearUsuario = async (req, res) => {
                 password_hash
             )
             VALUES ($1, $2, $3, $4)
-            RETURNING ${camposUsuario}`,
-            [
-                nombre,
-                apellido,
-                email,
-                passwordHash
-            ]
+            RETURNING id`,
+            [nombre, apellido, email, passwordHash]
         );
 
-        const usuario = resultadoUsuario.rows[0];
+        const usuarioId = resultadoUsuario.rows[0].id;
+
+        const resultadoRoles = await conexion.query(
+            `SELECT id, nombre
+             FROM roles
+             WHERE nombre = ANY($1::varchar[])`,
+            [roles]
+        );
+
+        if (resultadoRoles.rowCount !== roles.length) {
+            throw new Error('Uno o más roles no existen');
+        }
 
         for (const rol of resultadoRoles.rows) {
             await conexion.query(
-                `INSERT INTO usuario_roles (
-                    usuario_id,
-                    rol_id
-                )
-                VALUES ($1, $2)`,
-                [usuario.id, rol.id]
+                `INSERT INTO usuario_roles (usuario_id, rol_id)
+                 VALUES ($1, $2)`,
+                [usuarioId, rol.id]
             );
         }
 
         await conexion.query('COMMIT');
-        transaccionIniciada = false;
 
         return res.status(201).json({
             success: true,
             message: 'Usuario creado correctamente',
-            usuario: {
-                ...usuario,
-                roles: resultadoRoles.rows.map((rol) => rol.nombre)
+            data: {
+                id: usuarioId,
+                nombre,
+                apellido,
+                email,
+                roles
             }
         });
     } catch (error) {
-        await revertirTransaccion(conexion, transaccionIniciada);
+        await conexion.query('ROLLBACK');
 
-        if (error.code === '23505') {
-            return res.status(409).json({
-                success: false,
-                message: 'Ya existe una cuenta con ese correo electrónico'
-            });
+        if (error.name === 'ZodError') {
+            return responderValidacion(
+                res,
+                error,
+                'Los datos del usuario no son válidos'
+            );
         }
 
-        return responderErrorInterno(
-            res,
-            'Error al crear usuario:',
-            error
-        );
+        return responderError(res, error);
     } finally {
-        conexion?.release();
+        conexion.release();
     }
 };
 
-export const listarUsuarios = async (req, res) => {
-    const validacion = listarUsuariosSchema.safeParse(req.query);
-
-    if (!validacion.success) {
-        return res.status(400).json({
-            success: false,
-            message: 'Los filtros enviados no son válidos',
-            errores: validacion.error.issues.map((issue) => ({
-                campo: issue.path.join('.'),
-                mensaje: issue.message
-            }))
-        });
-    }
-
-    const { pagina, limite, buscar, estado } = validacion.data;
-    const offset = (pagina - 1) * limite;
-
+export const editarUsuario = async (req, res) => {
     try {
-        const condiciones = [];
-        const valores = [];
+        const { id } = idUsuarioSchema.parse(req.params);
+        const datos = editarUsuarioSchema.parse(req.body);
 
-        if (buscar) {
-            valores.push(`%${buscar}%`);
-            condiciones.push(
-                `(nombre ILIKE $${valores.length}
-                OR apellido ILIKE $${valores.length}
-                OR email ILIKE $${valores.length})`
-            );
-        }
+        const permitido = await esUsuarioPersonal(pool, id);
 
-        if (estado) {
-            valores.push(estado);
-            condiciones.push(`estado = $${valores.length}`);
-        }
-
-        const where = condiciones.length
-            ? `WHERE ${condiciones.join(' AND ')}`
-            : '';
-
-        const resultadoTotal = await pool.query(
-            `SELECT COUNT(*)::INTEGER AS total
-             FROM usuarios
-             ${where}`,
-            valores
-        );
-
-        const total = resultadoTotal.rows[0].total;
-        const valoresListado = [...valores, limite, offset];
-
-        const resultadoUsuarios = await pool.query(
-            `SELECT ${camposUsuario}
-             FROM usuarios
-             ${where}
-             ORDER BY created_at DESC, id
-             LIMIT $${valores.length + 1}
-             OFFSET $${valores.length + 2}`,
-            valoresListado
-        );
-
-        const ids = resultadoUsuarios.rows.map((usuario) => usuario.id);
-        const rolesPorUsuario = new Map(ids.map((id) => [id, []]));
-
-        if (ids.length > 0) {
-            const resultadoRoles = await pool.query(
-                `SELECT ur.usuario_id, r.nombre AS rol
-                 FROM usuario_roles ur
-                 INNER JOIN roles r ON r.id = ur.rol_id
-                 WHERE ur.usuario_id = ANY($1::UUID[])
-                 ORDER BY r.nombre`,
-                [ids]
-            );
-
-            for (const fila of resultadoRoles.rows) {
-                rolesPorUsuario.get(fila.usuario_id)?.push(fila.rol);
-            }
-        }
-
-        const usuarios = resultadoUsuarios.rows.map((usuario) => ({
-            ...usuario,
-            roles: rolesPorUsuario.get(usuario.id) ?? []
-        }));
-
-        return res.status(200).json({
-            success: true,
-            data: usuarios,
-            paginacion: {
-                pagina,
-                limite,
-                total,
-                paginas: Math.ceil(total / limite)
-            }
-        });
-    } catch (error) {
-        return responderErrorInterno(
-            res,
-            'Error al listar usuarios:',
-            error
-        );
-    }
-};
-
-export const obtenerUsuario = async (req, res) => {
-    const id = validarId(req, res);
-
-    if (!id) {
-        return;
-    }
-
-    try {
-        const resultadoUsuario = await pool.query(
-            `SELECT ${camposUsuario}
-             FROM usuarios
-             WHERE id = $1
-             LIMIT 1`,
-            [id]
-        );
-
-        if (resultadoUsuario.rowCount === 0) {
+        if (!permitido) {
             return res.status(404).json({
                 success: false,
                 message: 'Usuario no encontrado'
             });
         }
 
-        const [resultadoRoles, resultadoPermisos] = await Promise.all([
-            pool.query(
-                `SELECT r.nombre
-                 FROM usuario_roles ur
-                 INNER JOIN roles r ON r.id = ur.rol_id
-                 WHERE ur.usuario_id = $1
-                 ORDER BY r.nombre`,
-                [id]
-            ),
-            pool.query(
-                `SELECT DISTINCT p.codigo
-                 FROM usuario_roles ur
-                 INNER JOIN rol_permisos rp ON rp.rol_id = ur.rol_id
-                 INNER JOIN permisos p ON p.id = rp.permiso_id
-                 WHERE ur.usuario_id = $1
-                 ORDER BY p.codigo`,
-                [id]
-            )
-        ]);
+        const campos = ['nombre', 'apellido', 'email'];
+        const asignaciones = [];
+        const valores = [];
+
+        for (const campo of campos) {
+            if (Object.hasOwn(datos, campo)) {
+                valores.push(datos[campo]);
+                asignaciones.push(`${campo} = $${valores.length}`);
+            }
+        }
+
+        if (asignaciones.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No hay datos para actualizar'
+            });
+        }
+
+        valores.push(id);
+
+        const resultado = await pool.query(
+            `UPDATE usuarios
+             SET ${asignaciones.join(', ')},
+                 updated_at = NOW()
+             WHERE id = $${valores.length}
+             RETURNING id, nombre, apellido, email, estado, updated_at`,
+            valores
+        );
 
         return res.status(200).json({
             success: true,
-            usuario: {
-                ...resultadoUsuario.rows[0],
-                roles: resultadoRoles.rows.map((fila) => fila.nombre),
-                permisos: resultadoPermisos.rows.map((fila) => fila.codigo)
-            }
+            message: 'Usuario actualizado correctamente',
+            data: resultado.rows[0]
         });
     } catch (error) {
-        return responderErrorInterno(
-            res,
-            'Error al obtener usuario:',
-            error
-        );
+        if (error.name === 'ZodError') {
+            return responderValidacion(
+                res,
+                error,
+                'Los datos enviados no son válidos'
+            );
+        }
+
+        return responderError(res, error);
     }
 };
 
 export const cambiarEstadoUsuario = async (req, res) => {
-    const id = validarId(req, res);
-
-    if (!id) {
-        return;
-    }
-
-    const validacion = cambiarEstadoUsuarioSchema.safeParse(req.body);
-
-    if (!validacion.success) {
-        return res.status(400).json({
-            success: false,
-            message: 'El estado enviado no es válido',
-            errores: validacion.error.issues.map((issue) => ({
-                campo: issue.path.join('.'),
-                mensaje: issue.message
-            }))
-        });
-    }
-
-    const { estado } = validacion.data;
-
-    if (id === req.usuario.id && estado !== 'activo') {
-        return res.status(400).json({
-            success: false,
-            message: 'No podés desactivar o bloquear tu propia cuenta'
-        });
-    }
-
-    let conexion;
-    let transaccionIniciada = false;
+    const conexion = await pool.connect();
 
     try {
-        conexion = await pool.connect();
+        const { id } = idUsuarioSchema.parse(req.params);
+        const { estado } = cambiarEstadoUsuarioSchema.parse(req.body);
 
         await conexion.query('BEGIN');
-        transaccionIniciada = true;
-
-        /*
-         * Uso el mismo bloqueo que en los cambios de roles para evitar
-         * que dos operaciones simultáneas eliminen al último ADMIN activo.
-         */
         await bloquearCambiosAdministrativos(conexion);
 
-        const resultadoUsuario = await conexion.query(
-            `SELECT id, estado
-             FROM usuarios
-             WHERE id = $1
+        const usuario = await conexion.query(
+            `SELECT u.id, u.estado
+             FROM usuarios u
+             WHERE u.id = $1
+             AND EXISTS (
+                SELECT 1
+                FROM usuario_roles ur
+                INNER JOIN roles r ON r.id = ur.rol_id
+                WHERE ur.usuario_id = u.id
+                AND r.nombre = ANY($2::varchar[])
+             )
              FOR UPDATE`,
-            [id]
+            [id, ROLES_PERSONAL]
         );
 
-        if (resultadoUsuario.rowCount === 0) {
-            await revertirTransaccion(conexion, transaccionIniciada);
-            transaccionIniciada = false;
+        if (usuario.rowCount === 0) {
+            await conexion.query('ROLLBACK');
 
             return res.status(404).json({
                 success: false,
@@ -442,133 +445,106 @@ export const cambiarEstadoUsuario = async (req, res) => {
             });
         }
 
-        if (estado !== 'activo') {
-            const resultadoEsAdmin = await conexion.query(
-                `SELECT EXISTS (
-                    SELECT 1
-                    FROM usuario_roles ur
-                    INNER JOIN roles r ON r.id = ur.rol_id
-                    WHERE ur.usuario_id = $1
-                      AND r.nombre = 'ADMIN'
-                ) AS es_admin`,
-                [id]
-            );
+        const rolesUsuario = await conexion.query(
+            `SELECT r.nombre
+             FROM usuario_roles ur
+             INNER JOIN roles r ON r.id = ur.rol_id
+             WHERE ur.usuario_id = $1`,
+            [id]
+        );
 
-            if (resultadoEsAdmin.rows[0].es_admin) {
-                const totalAdministradores = await contarAdministradoresActivos(
-                    conexion
-                );
+        const esAdmin = rolesUsuario.rows.some(
+            (rol) => rol.nombre === 'ADMIN'
+        );
 
-                if (totalAdministradores <= 1) {
-                    await revertirTransaccion(conexion, transaccionIniciada);
-                    transaccionIniciada = false;
+        if (
+            esAdmin &&
+            usuario.rows[0].estado === 'activo' &&
+            estado !== 'activo'
+        ) {
+            const totalAdmins = await contarAdministradoresActivos(conexion);
 
-                    return res.status(409).json({
-                        success: false,
-                        message: 'No se puede desactivar la última cuenta administradora activa'
-                    });
-                }
+            if (totalAdmins <= 1) {
+                await conexion.query('ROLLBACK');
+
+                return res.status(409).json({
+                    success: false,
+                    message: 'No podés desactivar al último administrador activo'
+                });
             }
         }
 
         const resultado = await conexion.query(
             `UPDATE usuarios
-             SET estado = $2,
+             SET estado = $1,
                  updated_at = NOW()
-             WHERE id = $1
-             RETURNING ${camposUsuario}`,
-            [id, estado]
+             WHERE id = $2
+             RETURNING id, nombre, apellido, email, estado, updated_at`,
+            [estado, id]
         );
 
         if (estado !== 'activo') {
             await conexion.query(
-                `UPDATE sesiones
-                 SET revocado_at = NOW()
-                 WHERE usuario_id = $1
-                   AND revocado_at IS NULL`,
+                `DELETE FROM sesiones
+                 WHERE usuario_id = $1`,
                 [id]
             );
         }
 
         await conexion.query('COMMIT');
-        transaccionIniciada = false;
 
         return res.status(200).json({
             success: true,
-            message: 'Estado del usuario actualizado correctamente',
-            usuario: resultado.rows[0]
+            message: estado === 'activo'
+                ? 'Usuario activado correctamente'
+                : 'Usuario desactivado correctamente',
+            data: resultado.rows[0]
         });
     } catch (error) {
-        await revertirTransaccion(conexion, transaccionIniciada);
+        await conexion.query('ROLLBACK');
 
-        return responderErrorInterno(
-            res,
-            'Error al cambiar estado del usuario:',
-            error
-        );
+        if (error.name === 'ZodError') {
+            return responderValidacion(res, error, 'Los datos no son válidos');
+        }
+
+        return responderError(res, error);
     } finally {
-        conexion?.release();
+        conexion.release();
     }
 };
 
 export const cambiarRolesUsuario = async (req, res) => {
-    const id = validarId(req, res);
-
-    if (!id) {
-        return;
-    }
-
-    const validacion = cambiarRolesUsuarioSchema.safeParse(req.body);
-
-    if (!validacion.success) {
-        return res.status(400).json({
-            success: false,
-            message: 'Los roles enviados no son válidos',
-            errores: validacion.error.issues.map((issue) => ({
-                campo: issue.path.join('.'),
-                mensaje: issue.message
-            }))
-        });
-    }
-
-    const rolesSolicitados = validacion.data.roles;
-
-    if (
-        id === req.usuario.id &&
-        !rolesSolicitados.includes('ADMIN')
-    ) {
-        return res.status(400).json({
-            success: false,
-            message: 'No podés quitarte tu propio rol ADMIN'
-        });
-    }
-
-    let conexion;
-    let transaccionIniciada = false;
+    const conexion = await pool.connect();
 
     try {
-        conexion = await pool.connect();
+        const { id } = idUsuarioSchema.parse(req.params);
+        const { roles } = cambiarRolesUsuarioSchema.parse(req.body);
+
+        if (
+            !Array.isArray(roles) ||
+            roles.length === 0 ||
+            roles.some((rol) => !ROLES_PERSONAL.includes(rol))
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'Solo se pueden asignar roles del personal',
+                errors: {}
+            });
+        }
 
         await conexion.query('BEGIN');
-        transaccionIniciada = true;
-
-        /*
-         * Serializo los cambios de roles y estados para proteger
-         * la existencia de al menos un administrador activo.
-         */
         await bloquearCambiosAdministrativos(conexion);
 
-        const resultadoUsuario = await conexion.query(
-            `SELECT id, estado
+        const usuario = await conexion.query(
+            `SELECT id
              FROM usuarios
              WHERE id = $1
              FOR UPDATE`,
             [id]
         );
 
-        if (resultadoUsuario.rowCount === 0) {
-            await revertirTransaccion(conexion, transaccionIniciada);
-            transaccionIniciada = false;
+        if (usuario.rowCount === 0) {
+            await conexion.query('ROLLBACK');
 
             return res.status(404).json({
                 success: false,
@@ -576,65 +552,49 @@ export const cambiarRolesUsuario = async (req, res) => {
             });
         }
 
-        const resultadoRoles = await conexion.query(
-            `SELECT id, nombre
-             FROM roles
-             WHERE nombre = ANY($1::VARCHAR[])
-             ORDER BY nombre`,
-            [rolesSolicitados]
+        const rolesActuales = await conexion.query(
+            `SELECT r.nombre
+             FROM usuario_roles ur
+             INNER JOIN roles r ON r.id = ur.rol_id
+             WHERE ur.usuario_id = $1`,
+            [id]
         );
 
-        if (resultadoRoles.rowCount !== rolesSolicitados.length) {
-            await revertirTransaccion(conexion, transaccionIniciada);
-            transaccionIniciada = false;
-
-            const rolesEncontrados = new Set(
-                resultadoRoles.rows.map((rol) => rol.nombre)
-            );
-
-            return res.status(400).json({
-                success: false,
-                message: 'Uno o más roles no existen',
-                rolesInvalidos: rolesSolicitados.filter(
-                    (rol) => !rolesEncontrados.has(rol)
-                )
-            });
-        }
-
-        const conservaAdmin = resultadoRoles.rows.some(
+        const teniaAdmin = rolesActuales.rows.some(
             (rol) => rol.nombre === 'ADMIN'
         );
 
-        if (!conservaAdmin) {
-            const resultadoAdminActual = await conexion.query(
-                `SELECT EXISTS (
-                    SELECT 1
-                    FROM usuario_roles ur
-                    INNER JOIN roles r ON r.id = ur.rol_id
-                    WHERE ur.usuario_id = $1
-                      AND r.nombre = 'ADMIN'
-                ) AS es_admin`,
+        const tendraAdmin = roles.includes('ADMIN');
+
+        if (teniaAdmin && !tendraAdmin) {
+            const estadoUsuario = await conexion.query(
+                `SELECT estado FROM usuarios WHERE id = $1`,
                 [id]
             );
 
-            const usuarioEsAdmin = resultadoAdminActual.rows[0].es_admin;
-            const usuarioEstaActivo = resultadoUsuario.rows[0].estado === 'activo';
+            if (estadoUsuario.rows[0].estado === 'activo') {
+                const totalAdmins = await contarAdministradoresActivos(conexion);
 
-            if (usuarioEsAdmin && usuarioEstaActivo) {
-                const totalAdministradores = await contarAdministradoresActivos(
-                    conexion
-                );
-
-                if (totalAdministradores <= 1) {
-                    await revertirTransaccion(conexion, transaccionIniciada);
-                    transaccionIniciada = false;
+                if (totalAdmins <= 1) {
+                    await conexion.query('ROLLBACK');
 
                     return res.status(409).json({
                         success: false,
-                        message: 'No se puede quitar el rol ADMIN a la última cuenta administradora activa'
+                        message: 'No podés quitar el rol del último administrador activo'
                     });
                 }
             }
+        }
+
+        const resultadoRoles = await conexion.query(
+            `SELECT id, nombre
+             FROM roles
+             WHERE nombre = ANY($1::varchar[])`,
+            [roles]
+        );
+
+        if (resultadoRoles.rowCount !== roles.length) {
+            throw new Error('Uno o más roles no existen');
         }
 
         await conexion.query(
@@ -652,23 +612,24 @@ export const cambiarRolesUsuario = async (req, res) => {
         }
 
         await conexion.query('COMMIT');
-        transaccionIniciada = false;
 
         return res.status(200).json({
             success: true,
-            message: 'Roles del usuario actualizados correctamente',
-            usuario_id: id,
-            roles: resultadoRoles.rows.map((rol) => rol.nombre)
+            message: 'Roles actualizados correctamente',
+            data: {
+                usuario_id: id,
+                roles
+            }
         });
     } catch (error) {
-        await revertirTransaccion(conexion, transaccionIniciada);
+        await conexion.query('ROLLBACK');
 
-        return responderErrorInterno(
-            res,
-            'Error al cambiar roles del usuario:',
-            error
-        );
+        if (error.name === 'ZodError') {
+            return responderValidacion(res, error, 'Los roles no son válidos');
+        }
+
+        return responderError(res, error);
     } finally {
-        conexion?.release();
+        conexion.release();
     }
 };

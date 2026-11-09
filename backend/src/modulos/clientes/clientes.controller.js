@@ -1,4 +1,5 @@
 import { pool } from '../../db.js';
+import bcrypt from 'bcrypt';
 
 import {
     listarClientesSchema,
@@ -48,15 +49,17 @@ const responderValidacion = (res, error, mensaje) => {
 
 const responderError = (res, error) => {
     if (error.code === '23505') {
-        const campoDuplicado = error.constraint?.includes('documento')
+        const constraint = error.constraint || '';
+
+        const campoDuplicado = constraint.includes('documento')
             ? 'documento'
-            : error.constraint?.includes('email')
+            : constraint.includes('email')
                 ? 'email'
                 : null;
 
         return res.status(409).json({
             success: false,
-            message: 'Ya existe un cliente con ese documento, email o cuenta vinculada',
+            message: 'Ya existe un registro con esos datos',
             errors: campoDuplicado
                 ? {
                     [campoDuplicado]: [
@@ -89,7 +92,7 @@ const responderError = (res, error) => {
         });
     }
 
-    console.error('Error en módulo clientes:', error.message);
+    console.error('Error en módulo clientes:', error);
 
     return res.status(500).json({
         success: false,
@@ -98,6 +101,7 @@ const responderError = (res, error) => {
     });
 };
 
+/* Obtengo los clientes aplicando los filtros y la paginación solicitados. */
 export const listarClientes = async (req, res) => {
     try {
         const filtros = listarClientesSchema.parse(req.query);
@@ -172,6 +176,7 @@ export const listarClientes = async (req, res) => {
     }
 };
 
+/* Obtengo los datos completos de un cliente mediante su identificador. */
 export const obtenerCliente = async (req, res) => {
     try {
         const { id } = idClienteSchema.parse(req.params);
@@ -207,12 +212,17 @@ export const obtenerCliente = async (req, res) => {
     }
 };
 
+/* Creo la ficha del cliente y, si se solicitó, también su cuenta de acceso al portal. */
 export const crearCliente = async (req, res) => {
+    let conexion;
+    let transaccionIniciada = false;
+
     try {
         const datos = crearClienteSchema.parse(req.body);
 
         const {
-            usuario_id = null,
+            crearCuenta = false,
+            password,
             nombre,
             apellido,
             documento = null,
@@ -225,7 +235,76 @@ export const crearCliente = async (req, res) => {
             observaciones = null
         } = datos;
 
-        const resultado = await pool.query(
+        conexion = await pool.connect();
+
+        await conexion.query('BEGIN');
+        transaccionIniciada = true;
+
+        let usuarioId = null;
+
+        /* Si solicito una cuenta, verifico el rol CLIENTE y creo el usuario. */
+        if (crearCuenta) {
+            if (!email || !password) {
+                await conexion.query('ROLLBACK');
+                transaccionIniciada = false;
+
+                return res.status(400).json({
+                    success: false,
+                    message: 'El email y la contraseña son obligatorios para crear una cuenta',
+                    errors: {}
+                });
+            }
+
+            const rolResultado = await conexion.query(
+                `SELECT id
+                 FROM roles
+                 WHERE nombre = 'CLIENTE'
+                 LIMIT 1`
+            );
+
+            if (rolResultado.rowCount === 0) {
+                throw new Error('ROL_CLIENTE_NO_ENCONTRADO');
+            }
+
+            const passwordHash = await bcrypt.hash(password, 12);
+
+            const usuarioResultado = await conexion.query(
+                `INSERT INTO usuarios (
+                    nombre,
+                    apellido,
+                    email,
+                    password_hash,
+                    estado,
+                    email_verificado
+                )
+                VALUES ($1, $2, $3, $4, 'activo', false)
+                RETURNING id`,
+                [
+                    nombre,
+                    apellido,
+                    email,
+                    passwordHash
+                ]
+            );
+
+            usuarioId = usuarioResultado.rows[0].id;
+
+            /* Asigno el rol CLIENTE a la cuenta recién creada. */
+            await conexion.query(
+                `INSERT INTO usuario_roles (
+                    usuario_id,
+                    rol_id
+                )
+                VALUES ($1, $2)`,
+                [
+                    usuarioId,
+                    rolResultado.rows[0].id
+                ]
+            );
+        }
+
+        /* Creo la ficha y guardo la relación con la cuenta cuando existe. */
+        const resultado = await conexion.query(
             `INSERT INTO clientes (
                 usuario_id,
                 nombre,
@@ -244,7 +323,7 @@ export const crearCliente = async (req, res) => {
             )
             RETURNING ${camposCliente}`,
             [
-                usuario_id,
+                usuarioId,
                 nombre,
                 apellido,
                 documento,
@@ -258,12 +337,31 @@ export const crearCliente = async (req, res) => {
             ]
         );
 
+        await conexion.query('COMMIT');
+        transaccionIniciada = false;
+
         return res.status(201).json({
             success: true,
-            message: 'Cliente creado correctamente',
+            message: crearCuenta
+                ? 'Cliente y cuenta de acceso creados correctamente'
+                : 'Cliente creado correctamente',
             data: resultado.rows[0]
         });
+
     } catch (error) {
+        if (conexion && transaccionIniciada) {
+            await conexion.query('ROLLBACK');
+            transaccionIniciada = false;
+        }
+
+        if (error.message === 'ROL_CLIENTE_NO_ENCONTRADO') {
+            return res.status(500).json({
+                success: false,
+                message: 'No se encontró el rol CLIENTE en el sistema',
+                errors: {}
+            });
+        }
+
         if (error.name === 'ZodError') {
             return responderValidacion(
                 res,
@@ -273,16 +371,21 @@ export const crearCliente = async (req, res) => {
         }
 
         return responderError(res, error);
+
+    } finally {
+        if (conexion) {
+            conexion.release();
+        }
     }
 };
 
+/* Actualizo únicamente los datos de la ficha, sin modificar su cuenta vinculada. */
 export const editarCliente = async (req, res) => {
     try {
         const { id } = idClienteSchema.parse(req.params);
         const datos = editarClienteSchema.parse(req.body);
 
         const camposPermitidos = [
-            'usuario_id',
             'nombre',
             'apellido',
             'documento',
@@ -349,6 +452,7 @@ export const editarCliente = async (req, res) => {
     }
 };
 
+/* Cambio el estado de la ficha sin eliminar el historial del cliente. */
 export const cambiarEstadoCliente = async (req, res) => {
     try {
         const { id } = idClienteSchema.parse(req.params);

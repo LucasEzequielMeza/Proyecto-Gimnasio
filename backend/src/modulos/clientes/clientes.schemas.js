@@ -25,14 +25,7 @@ const emailOpcional = z.preprocess(
         .trim()
         .email('El email no tiene un formato válido')
         .max(254, 'El email no puede superar los 254 caracteres')
-        .nullable()
-        .optional()
-);
-
-const usuarioIdOpcional = z.preprocess(
-    (valor) => valor === '' ? null : valor,
-    z.string()
-        .uuid('El ID del usuario no tiene un formato válido')
+        .transform((valor) => valor.toLowerCase())
         .nullable()
         .optional()
 );
@@ -95,37 +88,7 @@ const fechaOpcional = z.preprocess(
         .optional()
 );
 
-export const listarClientesSchema = z.object({
-    pagina: z.coerce.number({
-        error: 'La página debe ser un número'
-    }).int('La página debe ser un número entero')
-        .min(1, 'La página debe ser mayor que cero')
-        .default(1),
-
-    limite: z.coerce.number({
-        error: 'El límite debe ser un número'
-    }).int('El límite debe ser un número entero')
-        .min(1, 'El límite mínimo es 1')
-        .max(100, 'El límite máximo es 100')
-        .default(20),
-
-    buscar: z.string()
-        .trim()
-        .max(100, 'La búsqueda no puede superar los 100 caracteres')
-        .default(''),
-
-    estado: z.enum(['activo', 'inactivo'], {
-        error: 'El estado debe ser activo o inactivo'
-    }).optional()
-}).strict();
-
-export const idClienteSchema = z.object({
-    id: z.string().uuid('El ID del cliente no tiene un formato válido')
-}).strict();
-
-export const crearClienteSchema = z.object({
-    usuario_id: usuarioIdOpcional,
-
+const camposFichaCliente = {
     nombre: z.string()
         .trim()
         .min(1, 'El nombre es obligatorio')
@@ -157,10 +120,78 @@ export const crearClienteSchema = z.object({
             .nullable()
             .optional()
     )
+};
+
+export const listarClientesSchema = z.object({
+    pagina: z.coerce.number({
+        error: 'La página debe ser un número'
+    }).int('La página debe ser un número entero')
+        .min(1, 'La página debe ser mayor que cero')
+        .default(1),
+
+    limite: z.coerce.number({
+        error: 'El límite debe ser un número'
+    }).int('El límite debe ser un número entero')
+        .min(1, 'El límite mínimo es 1')
+        .max(100, 'El límite máximo es 100')
+        .default(20),
+
+    buscar: z.string()
+        .trim()
+        .max(100, 'La búsqueda no puede superar los 100 caracteres')
+        .default(''),
+
+    estado: z.enum(['activo', 'inactivo'], {
+        error: 'El estado debe ser activo o inactivo'
+    }).optional()
 }).strict();
 
-export const editarClienteSchema = crearClienteSchema
-    .partial()
+export const idClienteSchema = z.object({
+    id: z.string().uuid('El ID del cliente no tiene un formato válido')
+}).strict();
+
+export const crearClienteSchema = z.object({
+    ...camposFichaCliente,
+
+    crearCuenta: z.boolean().default(false),
+
+    password: z.string()
+        .min(12, 'La contraseña debe tener al menos 12 caracteres')
+        .refine(
+            (valor) => Buffer.byteLength(valor, 'utf8') <= 72,
+            'La contraseña no puede superar los 72 bytes'
+        )
+        .optional()
+}).strict().superRefine((datos, contexto) => {
+    if (datos.crearCuenta) {
+        if (!datos.email) {
+            contexto.addIssue({
+                code: 'custom',
+                path: ['email'],
+                message: 'El email es obligatorio para crear una cuenta'
+            });
+        }
+
+        if (!datos.password) {
+            contexto.addIssue({
+                code: 'custom',
+                path: ['password'],
+                message: 'La contraseña es obligatoria para crear una cuenta'
+            });
+        }
+    } else if (datos.password !== undefined) {
+        contexto.addIssue({
+            code: 'custom',
+            path: ['password'],
+            message: 'No se puede enviar una contraseña si no se crea una cuenta'
+        });
+    }
+});
+
+export const editarClienteSchema = z.object({
+    ...camposFichaCliente
+}).partial()
+    .strict()
     .refine(
         (datos) => Object.keys(datos).length > 0,
         'Debés enviar al menos un campo para actualizar'
